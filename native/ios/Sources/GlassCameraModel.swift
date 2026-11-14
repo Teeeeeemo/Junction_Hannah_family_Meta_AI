@@ -20,8 +20,9 @@ final class GlassCameraModel: ObservableObject {
   @Published var recognizing = false
   @Published var connecting = false
   @Published var language = "en"
-  private let wearables = Wearables.shared
-  private let selector: AutoDeviceSelector
+  let narration = TourNarrator()
+  private let wearables: (any WearablesInterface)?
+  private let selector: AutoDeviceSelector?
   private let backend = MuseumBackend()
   private let output = GlassesDisplay()
   private let tokens = ListenerTokenBag()
@@ -37,9 +38,21 @@ final class GlassCameraModel: ObservableObject {
   private var attemptedAutomaticScan = false
 
   init(configurationError: String?) {
-    selector = AutoDeviceSelector(wearables: Wearables.shared, filter: { $0.supportsDisplay() })
-    if let configurationError { error = configurationError }
+    guard configurationError == nil else {
+      wearables = nil; selector = nil
+      error = configurationError ?? "Meta DAT configuration failed."
+      return
+    }
+    let wearables = Wearables.shared
+    self.wearables = wearables
+    selector = AutoDeviceSelector(wearables: wearables, filter: { $0.supportsDisplay() })
     output.onError = { [weak self] in self?.error = "Display: " + $0 }
+    output.onSelect = { [weak self] in self?.narration.select(number: $0) }
+    output.onTogglePlayback = { [weak self] in self?.narration.toggle() }
+    output.onNext = { [weak self] in self?.narration.next() }
+    output.onCycleRate = { [weak self] in self?.narration.cycleRate() }
+    narration.onSnapshot = { [weak self] in self?.output.show($0) }
+    narration.onError = { [weak self] in self?.error = $0 }
     registrationTask = Task { [weak self, wearables] in
       for await state in wearables.registrationStateStream() {
         guard !Task.isCancelled else { return }
@@ -49,10 +62,12 @@ final class GlassCameraModel: ObservableObject {
     }
   }
   func register() async {
+    guard let wearables else { return }
     do { try await wearables.startRegistration() }
     catch { self.error = error.localizedDescription }
   }
   func handleURL(_ url: URL) async {
+    guard let wearables else { return }
     guard URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "metaWearablesAction" }) == true else { return }
     do { _ = try await wearables.handleUrl(url) }
     catch { self.error = error.localizedDescription }
@@ -63,7 +78,7 @@ final class GlassCameraModel: ObservableObject {
   }
   /// Called only from the explicitly labelled camera-permission button.
   func startCamera() async {
-    guard registered, backendReady, session == nil, !connecting else { return }
+    guard let wearables, let selector, registered, backendReady, session == nil, !connecting else { return }
     connecting = true
     defer { if session == nil { connecting = false } }
     do {
@@ -126,6 +141,7 @@ final class GlassCameraModel: ObservableObject {
   }
   func analyzeCurrentFrame() {
     guard !recognizing, streaming, let preview, Date().timeIntervalSince(lastFrameAt) < 1 else { return }
+    narration.stop(); guide = nil
     recognizing = true; status = "Recognizing the artwork…"; error = ""
     let frame = ImmutableFrame(image: preview), run = generation, language = language
     analysisTask = Task { [weak self, backend] in
@@ -141,14 +157,16 @@ final class GlassCameraModel: ObservableObject {
         guard let jpeg else { throw NSError(domain: "MuseumCompanion", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not encode the live camera frame."]) }
         let result = try await backend.analyze(jpeg: jpeg, language: language)
         guard !Task.isCancelled, run == self.generation else { return }
-        self.guide = result; self.output.show(result); self.status = "Recognized from the glasses camera."
+        self.guide = result
+        self.narration.load(result, language: language)
+        self.status = "Recognized from the glasses camera."
       } catch { if !Task.isCancelled && run == self.generation { self.error = error.localizedDescription; self.status = "Scan failed. Reframe and tap Scan again." } }
       if run == self.generation { self.recognizing = false }
     }
   }
   func stop() {
     generation += 1; analysisTask?.cancel(); deadlineTask?.cancel(); sessionTask?.cancel(); errorTask?.cancel()
-    tokens.clear(); output.stop(); camera?.stop(); camera = nil; session?.stop(); session = nil
+    tokens.clear(); output.stop(); narration.stop(); camera?.stop(); camera = nil; session?.stop(); session = nil
     streaming = false; connecting = false; recognizing = false; preview = nil; guide = nil; frameCount = 0; status = "Camera stopped."
   }
   func shutdown() { stop(); registrationTask?.cancel() }

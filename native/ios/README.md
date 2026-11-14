@@ -1,6 +1,29 @@
 # Museum Companion：iOS DAT 相机接入工程
 
-状态：工程与接入代码已准备；尚未使用完整 Xcode 编译、签名安装或真机运行。Swift 语法检查、Info.plist 和 Xcode 工程属性列表检查通过，这些检查不解析或验证 Meta SDK 类型。
+状态（2026-11-14）：0.1.0 已完成远端 Release 构建、Sideloadly 签名、iPhone 15 Pro / iOS 26.5.2 安装启动；用户已反馈真实画面识别结果和眼镜文字输出。0.1.1 / build 2 新增下述界面与本地语音代码，尚待 Mac mini 完整编译和重新安装验收。不能用旧版的成功记录代替新版验证。
+
+## 0.1.1：紧凑显示与自动朗读
+
+- 手机采用 MUSE 深色与金色界面，连接设置和完整讲解折叠，当前一句与播放控制独立展示。
+- 眼镜使用透明背景与右侧列表，每页最多三个短点位；左侧保留主要视野。字幕默认关闭，开启后仅显示当前一句的限长预览，完整句子仍全部朗读。
+- 识别成功后使用 iOS 系统语音先读总览，再自动从 1 号点推进；手机和眼镜的选点都会立即停止旧朗读，播放新点位。
+- 手机和眼镜均有暂停／播放、下一处、返回总览和语速控制；0.75、1、1.25、1.5、1.75、2 是系统 TTS 语速档位，不能等同于音频文件精确的时长倍数。改变语速会重读当前一句。
+- 语音跟随 iOS 当前媒体输出，可在手机页顶部或朗读卡片的音频图标选择眼镜。实际声音从眼镜扬声器输出、语音可懂度和佩戴布局均须真机验证。
+- 切换作品重新识别、停止或进入后台会停止旧语音；旧 utterance 回调和过期显示任务不能覆盖新点位。
+- 保留已发布源码附件中的动态框架搜索路径和 SDK 初始化失败保护修复。
+
+在有 Xcode 的 Mac mini、仓库根目录执行：
+
+```bash
+bash scripts/test-ios-presentation.sh
+bash run_ios.sh unsigned
+```
+
+输出为 `build/ios/MuseumCompanion-unsigned.ipa`，下载回本机后用现有 Sideloadly 设置重签名安装。沿用同一 Apple ID 和原始 Bundle Identifier，核对工具实际生成的签名 Bundle ID 是否与旧安装一致。`museumcompanion://` 和 `MWDAT.AppLinkURLScheme` 保持原值；免费签名有效期以新描述文件为准。请勿把源码下载 ZIP 当作 IPA。
+
+`run_ios.sh` 来自已发布预览版的成功构建源码附件；0.1.1 本身仍须在远端实际运行此脚本。脚本支持 `IOS_BUILD_DIR` 自定义输出目录。
+
+本地已通过 17 项纯 Swift 导览／显示逻辑检查（中英分句、总览自动推进、手动改选、结束与重播、三点分页、Unicode 截断与默认隐藏字幕）、全部 Swift 源码语法检查、工程属性列表检查及构建脚本语法检查。这些检查不包含实际发声、iOS SDK 类型检查或镜片视觉验收。
 
 ## 工程范围
 
@@ -8,10 +31,10 @@
 - 在同一个 DAT `DeviceSession` 中接入相机与 Display；视频使用 `.raw`、中等分辨率、15 FPS。
 - 接收并显示真实眼镜帧；收到第 8 帧后自动发起一次作品识别。
 - 将真实帧压缩后提交给现有 `/api/analyze`，复用本机 Gemini 后端。
-- 接收作品、介绍和细节点，并尝试通过 DAT Display 显示文字与选点按钮。
+- 接收作品、介绍和细节点，通过 DAT Display 显示紧凑点位列表与可选当前句字幕，并使用系统 TTS 自动导览。
 - 手动再次扫描；停止、超时、后台与过期异步结果的清理。
 
-这不是完整 iOS 版导览：尚未迁移连续细节追踪、镜片现实坐标校准、2×／4×局部窗、完整语音导览、麦克风追问和语音倍速控制。Swift 代码中的 Display 与相机并行使用仍须实际编译及真机验证。
+尚未迁移连续细节追踪、镜片现实坐标校准、2×／4×局部窗、Gemini Live 麦克风追问和语音指令调速。Web 的 HTML/CSS 没有直接嵌入原生 DAT Display；此处为同一产品结构的原生实现，不能宣称视觉逐像素一致或功能完全对齐。
 
 ## 构建条件
 
@@ -47,10 +70,10 @@ plutil -lint native/ios/Info.plist native/ios/MuseumCompanion.xcodeproj/project.
 swiftc -frontend -parse native/ios/Sources/*.swift
 ```
 
-以上已通过；**不能据此宣称 iOS SDK 类型检查、链接、签名、安装或真机功能通过**。环境升级完成后首先执行：
+0.1.0 的构建与真机反馈已单独记录；0.1.1 的本地检查不解析完整 iOS SDK。新版在 Mac mini 上仍需完成 SDK 类型检查、链接和真机验收：
 
 ```bash
 xcodebuild -project native/ios/MuseumCompanion.xcodeproj -scheme MuseumCompanion -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 ```
 
-此命令尚未执行成功。构建、设备权限、相机与显示并发、后台行为和实际延迟等结果需补充到进度文档。
+请以新版构建日志、安装版本号和实际佩戴结果补充验收，尤其验证：默认视野无长段文字；听到总览后自动进入 1 号点；点选 3 号立即切换语音；暂停／继续；开关字幕；三点分页；眼镜音频路由；停止／重扫时无旧语音。

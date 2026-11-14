@@ -6,7 +6,15 @@
 
 ## 1. 当前结论
 
-**Web／Simulator MVP 已实现并完成最小服务联调；项目正在进入真实眼镜相机接入阶段。完整的“看向艺术品 → 自动识别 → 语音导览 → 现实细节跟随框”尚未在眼镜上跑通。**
+**Web／Simulator MVP 已实现；iOS 0.1.0 已完成目标手机安装启动，并收到真实画面识别及眼镜文字显示反馈。0.1.1 正在补齐紧凑界面与系统语音导览，需重新编译、安装验收。完整的“自动语音导览 → 现实细节跟随框”尚未在眼镜上跑通。**
+
+### 晚间真机进展与 0.1.1 修复
+
+- 安装目标已明确为 iPhone 15 Pro / iOS 26.5.2、UDID 尾号 `2213803A`。Sideloadly 安装记录为 7 天签名；用户完成信任开发者后实际进入应用。
+- 0.1.0 实际签名 Bundle Identifier 为 `com.muse.museumcompanion.WJZW275NK2`。Meta 注册成功；曾收到眼镜端 DAT 应用需更新的 SDK 错误，随后用户提供真实识别结果，并反馈眼镜长文遮挡与无语音。
+- 问题对应此前 iOS 原型的明确缺口：Display 直接显示长段文字，且没有语音合成。0.1.1 改为透明、短标题、三点分页和默认关闭字幕；加入本地中英 TTS、总览→1 号点→后续点位、选点打断、暂停和语速档位。
+- 新版采用原生 DAT UI，手机界面统一 MUSE 风格；不是把 Web 页面原封不动搬入镜片。持续跟随框、局部放大和 Gemini Live 追问仍未迁移。
+- 新版完整 Xcode 构建由用户在 Mac mini 执行；本机维持 macOS 13.7.5，无需安装 Xcode 或升级系统。构建命令与验收清单见 [iOS README](../native/ios/README.md)。后文初期清单保留阶段上下文，以本节最新记录为准。
 
 本次新增的两项工作：
 
@@ -56,7 +64,7 @@
 | 眼镜 | Meta Ray-Ban Display，已配对、Developer Mode 已开启；固件版本待记录 |
 | Meta AI App | 截图显示 299.0.0.26.159 |
 | 设备页 DAT SDK | 截图显示 1.0.0.0；这是设备页 SDK 标记，不等于固件版本，也不等于项目依赖版本 |
-| iPhone | 用户提供 iOS 26.5.2；型号回复为“ios17pro”，暂按 iPhone 17 Pro 理解，待核对 |
+| iPhone | 安装目标已核实为 iPhone 15 Pro / iOS 26.5.2 |
 | Mac | MacBook Pro `MacBookPro18,3`，Apple M1 Pro，32 GB RAM |
 | Mac 系统 | macOS 13.7.5；本次检查约 159 GiB 可用空间 |
 | 当前 Apple 工具链 | 只有 Command Line Tools，Swift 5.8.1；`xcodebuild` 未配置为完整 Xcode |
