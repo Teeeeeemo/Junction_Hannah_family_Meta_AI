@@ -51,10 +51,11 @@ actor MuseumBackend {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue(cookie, forHTTPHeaderField: "Cookie")
     request.setValue(origin.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")), forHTTPHeaderField: "Origin")
-    request.httpBody = try JSONSerialization.data(withJSONObject: [
+    let payload: [String: Any] = [
       "image": "data:image/jpeg;base64," + jpeg.base64EncodedString(),
       "language": language, "demo": false,
-    ])
+    ]
+    request.httpBody = try JSONSerialization.data(withJSONObject: payload)
     let (data, response) = try await session.data(for: request)
     guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
       let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]

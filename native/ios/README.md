@@ -1,6 +1,16 @@
 # Museum Companion：iOS DAT 相机接入工程
 
-状态（2026-11-14）：0.1.0 已完成远端 Release 构建、Sideloadly 签名、iPhone 15 Pro / iOS 26.5.2 安装启动；用户已反馈真实画面识别结果和眼镜文字输出。0.1.1 / build 2 新增下述界面与本地语音代码，尚待 Mac mini 完整编译和重新安装验收。不能用旧版的成功记录代替新版验证。
+状态（2026-11-14）：0.1.0 和 0.1.1 / build 2 均已远端构建，并通过 Sideloadly 安装到 iPhone 15 Pro / iOS 26.5.2，用户确认新版 MUSE 界面打开。当前源码为 **0.1.2 / build 3**，新增无眼镜调试，尚待完整 Xcode 构建和运行验收；目前没有已构建的 0.1.2 IPA。用户报告的 Gemini 语音缺失、无跟随框和杂物误讲仍未修复。
+
+## 0.1.2：无眼镜调试
+
+- 输入来源可选真实眼镜、手机后置相机、视频回放。手机相机与视频经官方 `MWDATMockDevice` 创建模拟 Display 设备，复用同一 DAT 相机／显示会话与识别管线。
+- 手机内显示 SDK 原生 Display 预览，保留实际按钮回调；模拟入口和帧计数明确标记，不冒充实际眼镜。
+- 模拟预览不依赖实体眼镜、真实 Meta 注册或后端；云端识别需要连接后端。未连接后端时可主动载入明确标记的四点离线布局样例，声音仍为系统 TTS。
+- 手机相机需系统 Camera 权限；Simulator 采用文件回放。文件导入持有安全作用域，复制到 App 缓存并检查可播放轨道；切源／停止使旧帧和迟到分析失效。
+- 输入策略、导览与显示逻辑共 31 项本地检查通过；SDK Mock 的实际运行、视频编码兼容及原生预览交互尚未验证。
+
+操作与验收：[无眼镜调试手册](../../docs/09-no-glasses-debugging.md)。未完成项：[已知问题与剩余功能](../../docs/08-bugs-and-roadmap.md)。
 
 ## 0.1.1：紧凑显示与自动朗读
 
@@ -21,7 +31,7 @@ bash run_ios.sh unsigned
 
 输出为 `build/ios/MuseumCompanion-unsigned.ipa`，下载回本机后用现有 Sideloadly 设置重签名安装。沿用同一 Apple ID 和原始 Bundle Identifier，核对工具实际生成的签名 Bundle ID 是否与旧安装一致。`museumcompanion://` 和 `MWDAT.AppLinkURLScheme` 保持原值；免费签名有效期以新描述文件为准。请勿把源码下载 ZIP 当作 IPA。
 
-`run_ios.sh` 来自已发布预览版的成功构建源码附件；0.1.1 本身仍须在远端实际运行此脚本。脚本支持 `IOS_BUILD_DIR` 自定义输出目录。
+`run_ios.sh` 来自已发布预览版的成功构建源码附件；0.1.1 已用此流程构建。当前 0.1.2 仍须在远端实际构建；脚本支持 `IOS_BUILD_DIR` 自定义输出目录。
 
 本地已通过 17 项纯 Swift 导览／显示逻辑检查（中英分句、总览自动推进、手动改选、结束与重播、三点分页、Unicode 截断与默认隐藏字幕）、全部 Swift 源码语法检查、工程属性列表检查及构建脚本语法检查。这些检查不包含实际发声、iOS SDK 类型检查或镜片视觉验收。
 
@@ -38,7 +48,7 @@ bash run_ios.sh unsigned
 
 ## 构建条件
 
-官方样例基线为 Xcode 26.4+、Swift 6.3+、iOS 17.2+；工程通过 Swift Package Manager 固定引用 Meta DAT **1.0.1** 的 `MWDATCore`、`MWDATCamera`、`MWDATDisplay`。
+官方样例基线为 Xcode 26.4+、Swift 6.3+、iOS 17.2+；工程通过 Swift Package Manager 固定引用 Meta DAT **1.0.1** 的 `MWDATCore`、`MWDATCamera`、`MWDATDisplay`、`MWDATMockDevice`。
 
 当前用户 iPhone 系统为 26.5.2，建议选支持 iOS 26.5 的 **Xcode 26.6 + macOS Tahoe 26.2 或更高的 26.x 正式版**。Swift 和 iOS SDK 随 Xcode 提供，不需要单独安装 Swift。当前 Mac 仍为 macOS 13.7.5，只有 Command Line Tools，尚不具备本工程的原生构建环境。
 
@@ -70,7 +80,7 @@ plutil -lint native/ios/Info.plist native/ios/MuseumCompanion.xcodeproj/project.
 swiftc -frontend -parse native/ios/Sources/*.swift
 ```
 
-0.1.0 的构建与真机反馈已单独记录；0.1.1 的本地检查不解析完整 iOS SDK。新版在 Mac mini 上仍需完成 SDK 类型检查、链接和真机验收：
+0.1.0／0.1.1 的构建与真机反馈已单独记录；0.1.2 的本地检查不解析完整 iOS SDK。当前版本在 Mac mini 上仍需完成 SDK 类型检查、链接和运行验收：
 
 ```bash
 xcodebuild -project native/ios/MuseumCompanion.xcodeproj -scheme MuseumCompanion -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build

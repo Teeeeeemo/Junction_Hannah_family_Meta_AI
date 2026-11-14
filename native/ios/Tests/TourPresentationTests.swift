@@ -36,6 +36,24 @@ import Foundation
     check(caption.count == 32 && caption.hasSuffix("…"), "CJK captions cannot grow to a paragraph")
     let emoji = HUDLayout.compact(String(repeating: "👨‍👩‍👧‍👦", count: 30), latin: 16, cjk: 7)
     check(emoji.count == 16 && emoji.hasSuffix("…"), "Clamping preserves grapheme clusters")
-    print("Passed \(checks) native tour/presentation checks. Audio and optical layout still require an iPhone and glasses.")
+    func ready(_ mode: DebugInputMode, sdk: Bool = true, backend: Bool = false, registration: Bool = false, video: Bool = false) -> Bool {
+      DebugInputPolicy.canStart(mode: mode, sdkReady: sdk, backendReady: backend, registered: registration, videoReady: video)
+    }
+    check(!ready(.glasses, registration: true), "Real glasses still require backend readiness")
+    check(!ready(.glasses, backend: true), "Real glasses still require actual Meta registration")
+    check(ready(.glasses, backend: true, registration: true), "Configured real-device route remains available")
+    check(ready(.phoneCamera), "Phone simulation does not require real Meta registration or backend")
+    check(!ready(.video), "Video mode cannot start without an imported file")
+    check(ready(.video, video: true), "Imported video can preview without cloud or hardware")
+    check(!ready(.phoneCamera, sdk: false), "SDK setup failure must not access Wearables.shared")
+    check(DebugInputMode.initial(stored: nil, simulator: true) == .video, "Simulator defaults to replay")
+    check(DebugInputMode.initial(stored: nil, simulator: false) == .glasses, "Phone retains explicit hardware default")
+    check(DebugInputMode.initial(stored: "phoneCamera", simulator: false) == .phoneCamera, "User-selected no-glasses mode persists")
+    check(DebugInputMode.initial(stored: "invalid", simulator: false) == .glasses, "Unknown saved source is safe")
+    let example = MuseumGuide.layoutExample(language: "en")
+    check(example.mode == "demo" && example.artwork.id == "layout-example", "Offline fixture is never marked as Gemini recognition")
+    check(example.details.map(\.number) == [1, 2, 3, 4], "Offline layout fixture exercises the next page")
+    check(example.overview.contains("not recognition") && MuseumGuide.layoutExample(language: "zh").overview.contains("不是对当前画面"), "Both spoken fixture introductions disclose their origin")
+    print("Passed \(checks) native tour/presentation/input-policy checks. Audio, SDK mocks and optical layout still require runtime validation.")
   }
 }

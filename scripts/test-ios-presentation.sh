@@ -5,6 +5,9 @@ test_dir="$(mktemp -d "${TMPDIR:-/tmp}/museum-tour-tests.XXXXXX")"
 trap 'rm -rf "$test_dir"' EXIT
 swiftc -module-cache-path "$test_dir/ModuleCache" \
   "$repo_root/native/ios/Sources/TourPresentation.swift" \
+  "$repo_root/native/ios/Sources/DebugInputMode.swift" \
+  "$repo_root/native/ios/Sources/MuseumBackend.swift" \
+  "$repo_root/native/ios/Sources/DebugGuide.swift" \
   "$repo_root/native/ios/Tests/TourPresentationTests.swift" \
   -o "$test_dir/tour-tests"
 "$test_dir/tour-tests"
