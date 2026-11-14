@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import UniformTypeIdentifiers
+import MWDATMockDevice
 
 /// MUSE's phone companion: setup and full text stay here, the glasses stay sparse.
 struct MuseumPhoneView: View {
@@ -32,6 +33,10 @@ struct MuseumPhoneView: View {
 
           DisclosureGroup(isExpanded: $setupOpen) {
             VStack(alignment: .leading, spacing: 14) {
+              Picker(text("Museum reference", "馆方参考资料"), selection: $model.referenceArtworkID) {
+                Text(text("Visual observations only", "仅作视觉观察")).tag("")
+                Text(text("The Met · Wheat Field with Cypresses", "大都会博物馆 · 麦田与柏树")).tag("met-436535")
+              }.disabled(model.recognizing || model.translating)
               SecureField(text("Complete HTTPS test link", "粘贴完整 HTTPS 测试链接"), text: $backendLink)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                 .padding(10).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
@@ -51,13 +56,39 @@ struct MuseumPhoneView: View {
           } label: { Text(text("Connection settings", "连接设置")).font(.headline) }
           .padding(16).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 16))
 
-          Picker("Language", selection: $model.language) {
+          Picker("Language", selection: Binding(get: { model.language }, set: { value in Task { await model.changeLanguage(value) } })) {
             Text("English").tag("en"); Text("中文").tag("zh")
-          }.pickerStyle(.segmented)
+          }.pickerStyle(.segmented).disabled(model.translating)
 
           if let image = model.preview {
             Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 220)
+              .overlay {
+                GeometryReader { geometry in
+                  if let box = model.trackedDetailBox, box.count == 4 {
+                    Rectangle().stroke(gold, lineWidth: 2)
+                      .frame(width: box[2] * geometry.size.width, height: box[3] * geometry.size.height)
+                      .position(x: (box[0] + box[2] / 2) * geometry.size.width, y: (box[1] + box[3] / 2) * geometry.size.height)
+                  }
+                }
+              }
               .clipShape(RoundedRectangle(cornerRadius: 16))
+            if model.guide?.mode == "gemini" {
+              Text(text("Image tracking: ", "画面追踪：") + model.trackingStatus).font(.caption)
+            }
+          }
+          if let search = model.artworkSearch, search.status == "needs_confirmation" {
+            Text(search.reason).font(.callout)
+            ForEach(search.candidates) { candidate in
+              Button(text("Confirm: ", "确认作品：") + candidate.label) { model.analyzeCurrentFrame(confirmedCandidateID: candidate.id) }
+                .disabled(model.recognizing)
+            }
+          }
+          if let image = model.zoomImage {
+            HStack {
+              Spacer()
+              Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 175, maxHeight: 110)
+                .overlay(alignment: .topTrailing) { Text("\(model.zoom)×").font(.caption).padding(4).background(.black.opacity(0.7)) }
+            }.accessibilityIdentifier("detail-zoom")
           }
           if model.inputMode.isMock, let display = model.debugPreview {
             VStack(alignment: .leading, spacing: 8) {
@@ -79,6 +110,20 @@ struct MuseumPhoneView: View {
             Text(guide.artwork.title).font(.system(size: 28, weight: .regular, design: .serif))
             narrationCard
             pointsCard(guide)
+            HStack {
+              Text(text("Detail view", "细节放大"))
+              ForEach([1,2,4], id: \.self) { value in
+                Button("\(value)×") { model.setZoom(value) }.buttonStyle(.bordered)
+                  .disabled(value > 1 && model.trackedDetailBox == nil)
+              }
+            }
+            DisclosureGroup(isExpanded: $model.showingSources) {
+              if guide.sources.isEmpty { Text(text("No verified historical sources for this artwork. Descriptions are visual observations.", "该作品暂无可核验的历史资料，当前内容仅作视觉观察。")) }
+              ForEach(guide.sources) { source in
+                if let url = URL(string: source.url), url.scheme == "https" { Link(source.title, destination: url) }
+              }
+              Text(text("These are references for the guide, not the object's ownership history.", "这里展示讲解参考资料，不代表藏品流传记录。"))
+            } label: { Text(text("Guide sources", "讲解依据")) }
             DisclosureGroup(text("Read the full guide", "展开完整讲解")) {
               VStack(alignment: .leading, spacing: 12) {
                 Text(guide.overview)
@@ -114,7 +159,7 @@ struct MuseumPhoneView: View {
           }.font(.caption).foregroundStyle(.secondary)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("camera-state")
-            .accessibilityValue("frames=\(model.frameCount); streaming=\(model.streaming); sdk=\(model.sdkReady); source=\(model.inputMode.rawValue)")
+            .accessibilityValue(String("frames=\(model.frameCount); streaming=\(model.streaming); sdk=\(model.sdkReady); source=\(model.inputMode.rawValue); sessionActive=\(model.sessionActive); connecting=\(model.connecting); mockEnabled=\(MockDeviceKit.shared.isEnabled); mockPaired=\(MockDeviceKit.shared.pairedDevices.count)"))
           if !model.error.isEmpty { Text(model.error).font(.callout).foregroundStyle(.red).textSelection(.enabled).accessibilityIdentifier("camera-error") }
           Text(text("Live camera + spoken guide. Keep this app in the foreground. Detail tracking and spatial boxes are still in development.",
             "实时相机与语音导览。使用时请保持 App 在前台；持续细节追踪与现实对齐框仍待接入。"))
@@ -133,21 +178,10 @@ struct MuseumPhoneView: View {
         }
     }
   }
-  private func sourceName(_ source: DebugInputMode) -> String {
-    switch source {
-    case .glasses: return text("Real glasses", "真实眼镜")
-    case .phoneCamera: return text("iPhone back camera", "手机后置相机")
-    case .video: return text("Video replay", "视频回放")
-    }
-  }
   private var inputCard: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Picker(text("Input source", "输入来源"), selection: Binding(get: { model.inputMode }, set: { mode in
-        Task { await model.setInputMode(mode) }
-      })) {
-        ForEach(DebugInputMode.allCases, id: \.self) { mode in Text(sourceName(mode)).tag(mode) }
-      }.pickerStyle(.menu).disabled(model.changingInput || model.connecting)
-        .accessibilityIdentifier("input-source")
+      NativeInputSourcePicker(model: model, mode: model.inputMode,
+        disabled: model.changingInput || model.connecting, language: model.language).equatable()
       if model.inputMode.isMock {
         Text(text("SIMULATION · NO PHYSICAL GLASSES", "模拟调试 · 无需实体眼镜"))
           .font(.caption.bold()).foregroundStyle(.orange)
@@ -176,36 +210,7 @@ struct MuseumPhoneView: View {
     }.padding(16).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 16))
   }
   private var narrationCard: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        Image(systemName: narration.playing ? "waveform" : "speaker.wave.2")
-        Text(narration.finished ? text("Tour complete", "导览完成") : narration.sectionTitle).font(.subheadline.weight(.semibold))
-        Spacer(); Text(narration.rateLabel).monospacedDigit().accessibilityIdentifier("speech-rate-value")
-      }.foregroundStyle(gold)
-      if !narration.sentence.isEmpty { Text(narration.sentence).font(.body).fixedSize(horizontal: false, vertical: true) }
-      HStack {
-        Button { narration.toggle() } label: {
-          Label(text(narration.playing ? "Pause" : "Play", narration.playing ? "暂停" : "播放"), systemImage: narration.playing ? "pause.fill" : "play.fill")
-        }.accessibilityIdentifier("toggle-playback")
-        Spacer()
-        Button(text("Next detail →", "下一个细节 →")) { narration.next() }
-      }.buttonStyle(.bordered)
-      Picker(text("Speech rate", "朗读语速"), selection: Binding(get: { narration.rate }, set: { narration.setRate($0) })) {
-        ForEach(TourNarrator.rates, id: \.self) { rate in Text(TourNarrator.label(for: rate)).tag(rate) }
-      }.pickerStyle(.menu).accessibilityIdentifier("speech-rate")
-      Toggle(text("Show captions on glasses", "在眼镜上显示字幕"), isOn: $narration.subtitles).font(.subheadline).accessibilityIdentifier("captions")
-      HStack {
-        Image(systemName: "hifispeaker")
-        Text(text("Audio: ", "音频输出：") + narration.audioOutput)
-        Spacer(); AudioOutputPicker().frame(width: 30, height: 30)
-      }.font(.caption).foregroundStyle(.secondary)
-      Text(text("Voice: iOS system speech. Gemini Live voice is not connected in this build.", "语音：iOS 系统朗读；本版本尚未接入 Gemini Live 语音。"))
-        .font(.caption).foregroundStyle(.secondary)
-    }.padding(18).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
-      .overlay(RoundedRectangle(cornerRadius: 18).stroke(gold.opacity(0.24)))
-      .accessibilityElement(children: .contain)
-      .accessibilityIdentifier("narration")
-      .accessibilityValue("selected=\(narration.selectedNumber.map(String.init) ?? "intro"); playing=\(narration.playing); rate=\(narration.rateLabel)")
+    NativeNarrationCard(narration: narration, language: model.language).equatable()
   }
   private func pointsCard(_ guide: MuseumGuide) -> some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -223,6 +228,102 @@ struct MuseumPhoneView: View {
         .accessibilityIdentifier("point-\(point.number)")
       }
     }.buttonStyle(.plain)
+  }
+}
+
+/// This menu depends on source state, not every incoming video frame.
+private struct NativeInputSourcePicker: View, Equatable {
+  let model: GlassCameraModel
+  let mode: DebugInputMode
+  let disabled: Bool
+  let language: String
+  private let identity: ObjectIdentifier
+  init(model: GlassCameraModel, mode: DebugInputMode, disabled: Bool, language: String) {
+    self.model = model; self.mode = mode; self.disabled = disabled; self.language = language
+    identity = ObjectIdentifier(model)
+  }
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.identity == rhs.identity && lhs.mode == rhs.mode && lhs.disabled == rhs.disabled && lhs.language == rhs.language
+  }
+  private func text(_ en: String, _ cn: String) -> String { language == "zh" ? cn : en }
+  private func sourceName(_ source: DebugInputMode) -> String {
+    switch source {
+    case .glasses: return text("Real glasses", "真实眼镜")
+    case .phoneCamera: return text("iPhone back camera", "手机后置相机")
+    case .video: return text("Video replay", "视频回放")
+    }
+  }
+  var body: some View {
+    Picker(text("Input source", "输入来源"), selection: Binding(get: { mode }, set: { mode in
+      Task { await model.setInputMode(mode) }
+    })) {
+      ForEach(DebugInputMode.allCases, id: \.self) { mode in Text(sourceName(mode)).tag(mode) }
+    }.pickerStyle(.menu).disabled(disabled).accessibilityIdentifier("input-source")
+  }
+}
+
+/// Camera frames must not recreate UIKit menus while a visitor changes speed.
+private struct NativeNarrationCard: View, Equatable {
+  @ObservedObject var narration: TourNarrator
+  let language: String
+  private let identity: ObjectIdentifier
+  @State private var question = ""
+  private let gold = Color(red: 0.88, green: 0.77, blue: 0.50)
+  private func text(_ en: String, _ cn: String) -> String { language == "zh" ? cn : en }
+  init(narration: TourNarrator, language: String) {
+    _narration = ObservedObject(wrappedValue: narration); self.language = language
+    identity = ObjectIdentifier(narration)
+  }
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.identity == rhs.identity && lhs.language == rhs.language }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack {
+        Image(systemName: narration.playing ? "waveform" : "speaker.wave.2")
+        Text(narration.finished
+          ? (narration.progressSnapshot.automatic ? text("Tour complete", "导览完成") : text("Section complete", "本段讲解完成"))
+          : narration.sectionTitle).font(.subheadline.weight(.semibold))
+        Spacer(); Text(narration.rateLabel).monospacedDigit().accessibilityIdentifier("speech-rate-value")
+      }.foregroundStyle(gold)
+      if narration.locationBlocked && narration.selectedNumber != nil {
+        Text(text("Waiting for reliable detail tracking. Keep the artwork in view; if tracking does not recover, tap Scan again.",
+          "正在定位当前细节，暂不播放讲解。请对准作品；若无法恢复，请重新扫描。"))
+          .font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("waiting-for-detail-location")
+      }
+      if !narration.sentence.isEmpty { Text(narration.sentence).font(.body).fixedSize(horizontal: false, vertical: true) }
+      HStack {
+        Button { narration.toggle() } label: {
+          Label(text(narration.playing ? "Pause" : "Play", narration.playing ? "暂停" : "播放"), systemImage: narration.playing ? "pause.fill" : "play.fill")
+        }.accessibilityIdentifier("toggle-playback")
+        Spacer()
+        Button(text("Next detail →", "下一个细节 →")) { narration.next() }
+      }.buttonStyle(.bordered)
+      Picker(text("Speech rate", "朗读语速"), selection: Binding(get: { narration.rate }, set: { narration.setRate($0) })) {
+        ForEach(TourNarrator.rates, id: \.self) { rate in Text(TourNarrator.label(for: rate)).tag(rate) }
+      }.pickerStyle(.menu).accessibilityIdentifier("speech-rate")
+      Toggle(text("Show captions on glasses", "在眼镜上显示字幕"), isOn: $narration.subtitles).font(.subheadline).accessibilityIdentifier("captions")
+      HStack {
+        Image(systemName: "hifispeaker")
+        Text(text("Audio: ", "音频输出：") + narration.audioOutput)
+        Spacer(); AudioOutputPicker().frame(width: 30, height: 30)
+      }.font(.caption).foregroundStyle(.secondary)
+      Picker(text("Voice source", "语音来源"), selection: Binding(get: { narration.voiceMode }, set: { narration.selectVoice($0) })) {
+        Text("Gemini Live · Aoede").tag(TourVoiceMode.gemini)
+        Text(text("Offline iOS speech", "离线系统朗读")).tag(TourVoiceMode.offline)
+      }.pickerStyle(.menu)
+      Text(narration.voiceStatus).font(.caption).foregroundStyle(.secondary)
+      if narration.voiceMode == .gemini {
+        Button(text("Reconnect Gemini voice", "重新连接 Gemini 语音")) { narration.reconnectVoice() }
+        Button(narration.listening ? text("Stop microphone", "关闭麦克风") : text("Talk to Gemini", "与 Gemini 对话")) { narration.toggleMicrophone() }
+        TextField(text("Ask about this detail", "询问当前细节"), text: $question)
+          .textFieldStyle(.roundedBorder).onSubmit { narration.ask(question); question = "" }
+        Button(text("Ask", "提问")) { narration.ask(question); question = "" }.disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        if narration.awaitingContinue { Text(text("Say or tap Continue to resume this point.", "说“继续”或点播放，从当前点继续。")) }
+      }
+    }.padding(18).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
+      .overlay(RoundedRectangle(cornerRadius: 18).stroke(gold.opacity(0.24)))
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("narration")
+      .accessibilityValue(String("selected=\(narration.selectedNumber.map(String.init) ?? "intro"); playing=\(narration.playing); rate=\(narration.rateLabel); voice=\(narration.voiceMode.rawValue); liveBytes=\(narration.liveReceivedBytes); livePlayed=\(narration.livePlayedFrames); awaitingContinue=\(narration.awaitingContinue); locationBlocked=\(narration.locationBlocked)"))
   }
 }
 

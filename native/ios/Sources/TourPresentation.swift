@@ -17,32 +17,46 @@ struct TourStop: Sendable {
 }
 
 struct TourProgress: Sendable {
-  let stops: [TourStop]
+  private(set) var stops: [TourStop]
   private(set) var stopIndex = 0
   private(set) var sentenceIndex = 0
   private(set) var finished = false
+  private(set) var automatic = true
   init(stops: [TourStop]) {
     self.stops = stops.filter { !$0.sentences.isEmpty }
     finished = self.stops.isEmpty
   }
   var current: TourStop? { !finished && stops.indices.contains(stopIndex) ? stops[stopIndex] : nil }
   var sentence: String { current?.sentences[sentenceIndex] ?? "" }
+  var retainedNumber: Int? { stops.indices.contains(stopIndex) ? stops[stopIndex].number : nil }
   mutating func advanceSentence() {
     guard let current else { return }
     if sentenceIndex + 1 < current.sentences.count { sentenceIndex += 1 }
-    else { nextStop() }
+    else if automatic { nextStop() }
+    else { finished = true }
   }
   mutating func nextStop() {
-    guard !finished else { return }
+    guard stops.indices.contains(stopIndex) else { return }
     sentenceIndex = 0
-    if stopIndex + 1 < stops.count { stopIndex += 1 }
+    if stopIndex + 1 < stops.count { stopIndex += 1; finished = false }
     else { finished = true }
   }
   @discardableResult mutating func select(number: Int?) -> Bool {
     guard let index = stops.firstIndex(where: { $0.number == number }) else { return false }
-    stopIndex = index; sentenceIndex = 0; finished = false; return true
+    stopIndex = index; sentenceIndex = 0; finished = false; automatic = false; return true
   }
-  mutating func restart() { stopIndex = 0; sentenceIndex = 0; finished = stops.isEmpty }
+  mutating func replayCurrent() { sentenceIndex = 0; finished = stops.isEmpty }
+  mutating func replace(stops: [TourStop]) {
+    let number = retainedNumber
+    self.stops = stops.filter { !$0.sentences.isEmpty }
+    guard let index = self.stops.firstIndex(where: { $0.number == number }) else {
+      stopIndex = 0; sentenceIndex = 0; finished = true; return
+    }
+    stopIndex = index
+    if self.stops.indices.contains(stopIndex) { sentenceIndex = min(sentenceIndex, self.stops[stopIndex].sentences.count - 1) }
+    else { sentenceIndex = 0; finished = true }
+  }
+  mutating func restart() { stopIndex = 0; sentenceIndex = 0; finished = stops.isEmpty; automatic = true }
 }
 
 struct TourPoint: Sendable { let number: Int; let title: String }

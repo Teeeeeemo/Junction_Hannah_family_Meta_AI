@@ -30,6 +30,24 @@ function setup() {
 const emit = (connection: any, serverContent: any) => connection.callbacks.onmessage({ serverContent });
 
 describe('Live interruption recovery', () => {
+  it('does not forward internal thought parts as visitor captions', async () => {
+    const { socket, connections } = setup();
+    await vi.waitFor(() => expect(socket.sent.some(event => event.type === 'ready')).toBe(true));
+    emit(connections[0], { modelTurn: { parts: [{ thought: true, text: 'internal-diagnostic' }, { text: 'Visible caption.' }] }, outputTranscription: { text: 'Spoken sentence.' } });
+    expect(socket.sent.filter(event => event.type === 'transcript').map(event => event.text)).toEqual(['Visible caption.', 'Spoken sentence.']);
+  });
+  it('validates bilingual tour controls and rejects invalid zoom/language tools', async () => {
+    const { socket, connections } = setup();
+    await vi.waitFor(() => expect(socket.sent.some(event => event.type === 'ready')).toBe(true));
+    const command = (args: unknown) => connections[0].callbacks.onmessage({ toolCall: { functionCalls: [{ id: 'control', name: 'tour_control', args }] } });
+    command({ action: 'pause' }); command({ action: 'resume' }); command({ action: 'next' });
+    command({ action: 'zoom', value: 4 }); command({ action: 'language', language: 'zh' }); command({ action: 'sources' });
+    command({ action: 'zoom', value: 3 }); command({ action: 'language', language: 'fr' }); command({ action: 'delete' });
+    expect(socket.sent.filter(event => event.type === 'command').map(({ action, value, language }) => ({ action, value, language }))).toEqual([
+      { action: 'pause' }, { action: 'resume' }, { action: 'next' }, { action: 'zoom', value: 4 }, { action: 'language', language: 'zh' }, { action: 'sources' },
+    ]);
+    expect(connections[0].session.sendToolResponse.mock.calls.slice(-3).every((args: any[]) => args[0].functionResponses[0].response.ok === false)).toBe(true);
+  });
   it('applies supported voice speed tools, rejects invalid values, and keeps them separate from point selection', async()=>{
     const {socket,connections}=setup();
     await vi.waitFor(()=>expect(socket.sent.some(event=>event.type==='ready')).toBe(true));

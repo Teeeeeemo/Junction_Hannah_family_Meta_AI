@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { App as WearableApp, Button as WearableButton } from '@wearables-ui-toolkit/mrbd';
-import type { Analysis, Box, Detail, Language, QuestionResponse } from './contracts';
+import type { Analysis, ArtworkSearch, ArtworkROI, Box, Detail, Language, QuestionResponse } from './contracts';
 import { createTracker, drawDemoScene, projectBox } from './vision';
 import type { Tracker } from './vision';
 import { LiveAudioClient, setBrowserSpeechRate, speakBrowser, stopBrowserSpeech, unlockAudio } from './audio';
@@ -59,6 +59,8 @@ export default function App() {
   const [question, setQuestion] = useState('');
   const [caption, setCaption] = useState('');
   const [error, setError] = useState('');
+  const [artworkSearch, setArtworkSearch] = useState<ArtworkSearch | null>(null);
+  const artworkSearchRef = useRef<ArtworkSearch | undefined>(undefined);
   const [notice, setNotice] = useState('');
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -215,7 +217,7 @@ export default function App() {
 
   const selectDetail = useCallback(async (detail: Detail, autoplay = true, text?: string) => {
     const token=++runRef.current; liveRef.current?.interrupt(); stopBrowserSpeech(); setSpeaking(false); speakingRef.current=false;
-    selectedRef.current=detail.id; setSelectedId(detail.id); setPoly(null); trackedPointRef.current=null; lossPausedRef.current=false; lastReadId.current=detail.id; setFocusIndex(detail.number-1);
+    selectedRef.current=detail.id; setSelectedId(detail.id); setPoly(null); trackedPointRef.current=null; lossPausedRef.current=false; lastReadId.current=detail.id; setFocusIndex(Math.max(0, analysisRef.current?.details.findIndex(point => point.id === detail.id) ?? 0));
     setPhase('details'); setSourcesOpen(false); autoRef.current=autoplay;
     const deadline=performance.now()+1800;
     const pointReady=()=>((trackedPointRef.current as {id:string;at:number}|null)?.id===detail.id);
@@ -261,7 +263,7 @@ export default function App() {
     }
   };
 
-  const startTour = async (isDemo: boolean) => {
+  const startTour = async (isDemo: boolean, confirmedCandidateId?: string) => {
     if(phase==='analyzing'||cameraStatus==='requesting')return;
     if(inputKind==='camera'&&!hasVideoFrame(videoRef.current)) {if(!await useCamera())return;}
     if(!sceneRef.current || !imageReady && inputKind==='image')return;
@@ -270,10 +272,48 @@ export default function App() {
     try {
       const image=imageRef.current;
       const video=videoRef.current;
-      const reference=inputKind==='image'&&image ? snapshot(image,image.naturalWidth,image.naturalHeight) : snapshot(video!,video!.videoWidth,video!.videoHeight);
+      let reference=inputKind==='image'&&image ? snapshot(image,image.naturalWidth,image.naturalHeight, Infinity) : snapshot(video!,video!.videoWidth,video!.videoHeight, Infinity);
       modelReference.current={width:reference.width,height:reference.height};
-      const result=await post<Analysis>('/api/analyze',{image:reference.toDataURL('image/jpeg',.85),language:languageRef.current,artworkId: inputKind==='image'&&imageUrl==='/artworks/wheat-field.jpg'?'met-436535':undefined,demo:isDemo});
+      let lock: ArtworkSearch | undefined, roi: ArtworkROI | undefined;
+      let analysisImage = reference;
+      if (!isDemo) {
+        let previous = confirmedCandidateId ? artworkSearchRef.current : undefined;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          lock = await post<ArtworkSearch>('/api/artwork-candidates', { image: reference.toDataURL('image/jpeg', .9), language: languageRef.current, previous, confirmedCandidateId });
+          if (token !== runRef.current) return;
+          artworkSearchRef.current = lock; setArtworkSearch(lock);
+          if (lock.status === 'locked' || lock.status !== 'searching') break;
+          previous = lock;
+          if (inputKind === 'image') {
+            // An uploaded still cannot provide independent temporal evidence; ask the user to confirm it.
+            setNotice(cn(languageRef.current, 'Confirm the visible artwork to continue.', '请确认当前作品后继续。')); setPhase('ready'); return;
+          }
+          const current = video!.currentTime;
+          const deadline = performance.now() + 2000;
+          while (video!.currentTime === current && performance.now() < deadline && token === runRef.current) await new Promise(resolve => setTimeout(resolve, 40));
+          if (token !== runRef.current) return;
+          if (video!.currentTime === current) throw new Error('Waiting for a new camera frame. Resume the video and retry.');
+          reference = snapshot(video!, video!.videoWidth, video!.videoHeight, Infinity);
+        }
+        if (!lock || lock.status !== 'locked') { setNotice(lock?.reason || 'Reframe the artwork.'); setPhase('ready'); return; }
+        const chosen = lock.candidates.find(candidate => candidate.id === lock!.selectedCandidateId)!;
+        const [x, y, width, height] = chosen.box;
+        const left = Math.floor(x * reference.width), top = Math.floor(y * reference.height);
+        const right = Math.min(reference.width, Math.ceil((x + width) * reference.width)), bottom = Math.min(reference.height, Math.ceil((y + height) * reference.height));
+        analysisImage = document.createElement('canvas'); analysisImage.width = right-left; analysisImage.height = bottom-top;
+        analysisImage.getContext('2d')!.drawImage(reference, left, top, right-left, bottom-top, 0, 0, right-left, bottom-top);
+        roi = { frameId: `web-${Date.now()}`, frameWidth: reference.width, frameHeight: reference.height, box: [left/reference.width, top/reference.height, (right-left)/reference.width, (bottom-top)/reference.height] };
+      }
+      const result=await post<Analysis>('/api/analyze',{image:analysisImage.toDataURL('image/jpeg',.9), lock, roi,language:languageRef.current,artworkId: inputKind==='image'&&imageUrl==='/artworks/wheat-field.jpg'?'met-436535':undefined,demo:isDemo});
       if(token!==runRef.current)return;
+      // Web tracking references the whole original frame; preserve the explicit transform.
+      if (result.coordinateSpace === 'artwork_roi' && result.roi) {
+        const [x,y,w,h] = result.roi.box;
+        result.details = result.details.map(detail => ({ ...detail, box: [x+detail.box[0]*w, y+detail.box[1]*h, detail.box[2]*w, detail.box[3]*h] as Box }));
+        result.coordinateSpace = 'frame';
+      }
+      modelReference.current={width:reference.width,height:reference.height};
+      setArtworkSearch(null); artworkSearchRef.current = undefined;
       result.details=result.details.map((d,i)=>({...d,number:i+1}));
       if(!result.details.length)throw new Error(cn(languageRef.current,'No reliable details found. Try a clearer artwork image.','没有找到可靠的细节点，请尝试更清晰的画面。'));
       analysisLanguageRef.current=languageRef.current; analysisRef.current=result; setAnalysis(result); setPhase('overview');
@@ -482,6 +522,7 @@ export default function App() {
         <div className="config-state"><span className={`status-light ${config?.configured?'online':''}`}/>{config?.configured?strings.keyReady:strings.noKey}<small>{config?.model||'Gemini'} · {cn(language,'Key stays on your local server','密钥只保留在本地后端')}</small></div>
         {active&&<button className="end-button" onClick={reset}>{strings.stop}</button>}
       </section>}
+      {artworkSearch && ['searching','needs_confirmation'].includes(artworkSearch.status) && <div className="notice-banner" role="group" aria-label="Choose artwork"><span>{artworkSearch.reason}</span>{artworkSearch.candidates.map(candidate => <button key={candidate.id} onClick={() => void startTour(false, candidate.id)}>{candidate.label}</button>)}</div>}
       {error&&<div className="error-banner" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss">×</button></div>}
       {notice&&<div className="notice-banner" role="status"><span>{notice}</span><button onClick={()=>setNotice('')} aria-label="Dismiss">×</button></div>}
       {!active&&<footer className="lobby-footer"><span>ONE ARTWORK. ENDLESS DISCOVERIES.</span><div className="language-switch"><button className={language==='en'?'active':''} onClick={()=>changeLanguage('en')}>EN</button><span>/</span><button className={language==='zh'?'active':''} onClick={()=>changeLanguage('zh')}>中</button></div></footer>}

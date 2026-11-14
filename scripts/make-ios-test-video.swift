@@ -4,7 +4,13 @@ import CoreGraphics
 import CoreVideo
 
 // Synthetic moving color pattern for SDK transport tests, never recognition.
-// Usage on a Mac with Xcode: swift scripts/make-ios-test-video.swift /tmp/fixture.mp4
+// Usage: swift scripts/make-ios-test-video.swift /tmp/fixture.mp4 [seconds=120]
+guard CommandLine.arguments.count >= 2,
+  let seconds = Int(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "120"),
+  (1...600).contains(seconds) else {
+  FileHandle.standardError.write(Data("Usage: make-ios-test-video.swift OUTPUT.mp4 [1...600 seconds]\n".utf8))
+  exit(2)
+}
 let output = URL(fileURLWithPath: CommandLine.arguments[1])
 let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
 let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -21,7 +27,7 @@ let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sour
 writer.add(input)
 guard writer.startWriting() else { fatalError(String(describing: writer.error)) }
 writer.startSession(atSourceTime: .zero)
-for frame in 0..<1800 {
+for frame in 0..<(seconds * 15) {
   while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
   var optional: CVPixelBuffer?
   CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &optional)
@@ -44,4 +50,4 @@ let done = DispatchSemaphore(value: 0)
 writer.finishWriting { done.signal() }
 done.wait()
 guard writer.status == .completed else { fatalError(String(describing: writer.error)) }
-print("Generated 120-second HEVC moving-pattern fixture: \(output.lastPathComponent)")
+print("Generated \(seconds)-second HEVC moving-pattern fixture: \(output.lastPathComponent)")

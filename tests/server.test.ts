@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import { createMuseumServer } from '../server/index.ts';
 import { demoAnalysis } from '../server/content.ts';
-import { analyze, demoQuestion, localCommand, translateAnalysis } from '../server/gemini.ts';
+import { analyze, searchArtwork, demoQuestion, localCommand, translateAnalysis } from '../server/gemini.ts';
 import { clientAnalysis, imageData, normalizeAnalysis } from '../server/validation.ts';
 
 const IMAGE = 'data:image/png;base64,' + Buffer.alloc(64, 42).toString('base64');
@@ -26,8 +26,25 @@ describe('visual analysis validation and tour commands', () => {
     expect(result.sources).toEqual([]);
     expect(result.details.every(detail => detail.sourceIds.length === 0)).toBe(true);
   });
+  it('pins known artwork metadata to the trusted record rather than trusting generated identity fields', () => {
+    for (const [title, expectedTitle] of [['Wrong painting', 'Wheat Field with Cypresses'], ['错误画名', '麦田与柏树']]) {
+      const result = normalizeAnalysis({artwork:{id:'met-436535',title,artist:'Invented author',year:'1642'},overview:'Visible painting.',details:[]}, 'gemini', true);
+      expect(result.artwork).toEqual({id:'met-436535', title:expectedTitle, artist:'Vincent van Gogh', year:'1889'});
+      expect(result.sources.map(source=>source.id)).toEqual(['met-436535']);
+    }
+  });
+  it('requires both a trusted artwork hint and the matching result before publishing record identity', () => {
+    for (const [known, id] of [[false, 'met-436535'], [true, 'unidentified']] as const) {
+      const result = normalizeAnalysis({artwork:{id,title:'A framed blue landscape',artist:'Claimed author',year:'1700'},overview:'Visible blue field.',details:[]}, 'gemini', known);
+      expect(result.artwork).toEqual({id:'unidentified',title:'A framed blue landscape',artist:'Unknown',year:'Unknown'});
+      expect(result.sources).toEqual([]);
+    }
+  });
   it('accepts a verified empty detail list rather than filling prepared points', async () => {
-    const result = await analyze({ data: 'AAAA', mimeType: 'image/png' }, 'en', undefined, async () => ({ artwork: { id: 'unidentified', title: 'Blank image' }, overview: 'No artwork can be identified.', details: [] }));
+    const generate = async () => ({ status: 'candidates', candidates: [{ identityKey: 'empty-work', label: 'Minimal artwork', evidence: 'Labelled framed exhibit.', confidence: 0.9, box: [0,0,1,1], kind: 'planar' }] });
+    const first = await searchArtwork({data:'AAAA',mimeType:'image/png'}, 'en', undefined, undefined, generate);
+    const lock = await searchArtwork({data:'AAAA',mimeType:'image/png'}, 'en', first, undefined, generate);
+    const result = await analyze({ data: 'AAAA', mimeType: 'image/png' }, 'en', undefined, async () => ({ artwork: { id: 'unidentified', title: 'Minimal artwork' }, overview: 'No reliable internal details are visible.', roiVerified: true, details: [] }), {lock, roi: {frameId:'test-1',frameWidth:1000,frameHeight:1000,box:[0,0,1,1]}});
     expect(result.mode).toBe('gemini');
     expect(result.details).toEqual([]);
   });
@@ -37,12 +54,16 @@ describe('visual analysis validation and tour commands', () => {
     expect(() => imageData('data:image/png;base64,not valid')).toThrow();
     expect(imageData(IMAGE).mimeType).toBe('image/png');
   });
-  it('preserves stable detail IDs across context validation and rejects duplicate or reordered numbering', () => {
+  it('preserves stable detail IDs and sparse assigned numbers, rejecting duplicate or invalid numbers', () => {
     expect(clientAnalysis(demoAnalysis('en')).details.map(detail => detail.id)).toEqual(['cypress', 'clouds', 'wheat']);
     const duplicate = demoAnalysis('en'); duplicate.details[1].id = duplicate.details[0].id;
     expect(() => clientAnalysis(duplicate)).toThrow();
     const renumbered = demoAnalysis('en'); renumbered.details[0].number = 3;
     expect(() => clientAnalysis(renumbered)).toThrow();
+    const sparse = demoAnalysis('en'); sparse.details = [sparse.details[2], sparse.details[0]]; sparse.details[0].number = 7;
+    expect(clientAnalysis(sparse).details.map(detail => [detail.id, detail.number])).toEqual([['wheat',7],['cypress',1]]);
+    const invalid = demoAnalysis('en'); invalid.details[0].number = 9; expect(() => clientAnalysis(invalid)).toThrow();
+    invalid.details[0].number = 1.5; expect(() => clientAnalysis(invalid)).toThrow();
   });
   it('maps bilingual explicit point selection to the same stable ID and never wraps an invalid index', () => {
     const context = demoAnalysis('en');

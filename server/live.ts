@@ -57,6 +57,7 @@ export function attachLiveSocket(socket: WebSocket, config: RuntimeConfig, conne
           tools: [{ functionDeclarations: [
             { name: 'select_detail', description: 'Select a numbered detail from the current tour list when the visitor explicitly asks.', parameters: { type: Type.OBJECT, properties: { number: { type: Type.INTEGER, description: 'The point number in the current list' } }, required: ['number'] } },
             { name: 'set_playback_speed', description: 'Change actual narration playback speed when the visitor asks. This does not change visual zoom. Allowed rates: 0.75, 1, 1.25, 1.5, 1.75, 2. For faster/slower choose the next allowed rate from the current speed. Normal speed is 1.', parameters: { type: Type.OBJECT, properties: { rate: { type: Type.NUMBER } }, required: ['rate'] } },
+            { name: 'tour_control', description: 'Control the tour only on an explicit visitor request, in Chinese or English: pause, resume the current point, next point, change visual zoom, language, or show sources. The application performs the action; do not duplicate narration.', parameters: { type: Type.OBJECT, properties: { action: { type: Type.STRING, enum: ['pause', 'resume', 'next', 'zoom', 'language', 'sources'] }, value: { type: Type.NUMBER, description: 'For zoom only: 1, 2, or 4.' }, language: { type: Type.STRING, enum: ['en', 'zh'] } }, required: ['action'] } },
           ] }],
         },
         callbacks: {
@@ -72,7 +73,7 @@ export function attachLiveSocket(socket: WebSocket, config: RuntimeConfig, conne
               send({ type: 'transcript', role: 'user', text: content.inputTranscription.text });
             }
             for (const part of content?.modelTurn?.parts || []) {
-              if (outputSuppressed || content?.interrupted) continue;
+              if (outputSuppressed || content?.interrupted || part.thought) continue;
               generationActive = true;
               if (part.inlineData?.data) send({ type: 'audio', data: part.inlineData.data, mimeType: part.inlineData.mimeType || 'audio/pcm;rate=24000' });
               if (part.text) send({ type: 'transcript', role: 'assistant', text: part.text });
@@ -80,6 +81,16 @@ export function attachLiveSocket(socket: WebSocket, config: RuntimeConfig, conne
             if (!outputSuppressed && !content?.interrupted && content?.outputTranscription?.text) send({ type: 'transcript', role: 'assistant', text: content.outputTranscription.text });
             if (content?.turnComplete) { generationActive = false; if (!outputSuppressed && !content?.interrupted) send({ type: 'turn_complete' }); }
             for (const call of event.toolCall?.functionCalls || []) {
+              if (call.name === 'tour_control' && !outputSuppressed) {
+                const { action, value, language: requestedLanguage } = call.args || {};
+                const valid = ['pause', 'resume', 'next', 'sources'].includes(action)
+                  || (action === 'zoom' && [1, 2, 4].includes(value))
+                  || (action === 'language' && ['en', 'zh'].includes(requestedLanguage));
+                try { session?.sendToolResponse({ functionResponses: [{ id: call.id, name: call.name, response: valid ? { ok: true, applicationWillHandle: true } : { ok: false, message: 'Invalid tour command. Clarify the request.' } }] }); }
+                catch { send({ type: 'error', message: 'Could not confirm the command. Reconnect voice.' }); }
+                if (valid) send({ type: 'command', action, ...(action === 'zoom' ? { value } : {}), ...(action === 'language' ? { language: requestedLanguage } : {}) });
+                continue;
+              }
               if (call.name === 'set_playback_speed' && !outputSuppressed) {
                 const rate = call.args?.rate;
                 const valid = isPlaybackRate(rate);

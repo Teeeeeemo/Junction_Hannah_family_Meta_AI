@@ -1,4 +1,4 @@
-import type { Analysis, Box, Detail, Language, Source } from '../src/contracts.ts';
+import type { Analysis, ArtworkCandidate, ArtworkROI, ArtworkSearch, Box, Detail, Language, Source } from '../src/contracts.ts';
 import { MET_SOURCE } from './content.ts';
 
 export class ApiError extends Error {
@@ -17,7 +17,7 @@ export function imageData(value: unknown): { mimeType: string; data: string } {
   return { mimeType: match[1], data: match[2] };
 }
 
-function validBox(value: unknown, thousand = false): Box | null {
+export function validBox(value: unknown, thousand = false): Box | null {
   if (!Array.isArray(value) || value.length !== 4 || !value.every(Number.isFinite)) return null;
   let [x, y, width, height] = value as number[];
   if (thousand) {
@@ -33,7 +33,8 @@ export function normalizeAnalysis(raw: unknown, mode: 'gemini' | 'demo', knownAr
   if (!raw || typeof raw !== 'object') throw new ApiError(502, 'INVALID_MODEL_RESPONSE', 'The model returned no usable analysis.');
   const value = raw as Record<string, any>;
   const artwork = value.artwork && typeof value.artwork === 'object' ? value.artwork : {};
-  const sources: Source[] = knownArtwork && artwork.id === 'met-436535' ? [MET_SOURCE] : [];
+  const verified = knownArtwork && artwork.id === MET_SOURCE.id;
+  const sources: Source[] = verified ? [MET_SOURCE] : [];
   const sourceIds = new Set(sources.map(source => source.id));
   const details: Detail[] = [];
   const candidates = Array.isArray(value.details) ? value.details.slice(0, 8) : [];
@@ -43,7 +44,9 @@ export function normalizeAnalysis(raw: unknown, mode: 'gemini' | 'demo', knownAr
     const title = textOf(candidate.title, 100);
     const description = textOf(candidate.description, 1800);
     if (!box || !title || !description || details.some(detail => detail.title.toLowerCase() === title.toLowerCase())) continue;
-    const id = `detail-${details.length + 1}`;
+    const proposedId = textOf(candidate.id, 80);
+    if (proposedId && details.some(detail => detail.id === proposedId)) continue;
+    const id = /^[a-zA-Z0-9_-]{1,80}$/.test(proposedId) ? proposedId : `detail-${details.length + 1}`;
     details.push({ id, number: details.length + 1, title, description, box, sourceIds: Array.isArray(candidate.sourceIds) ? candidate.sourceIds.filter((id: unknown) => typeof id === 'string' && sourceIds.has(id)) : [] });
     if (details.length === 5) break;
   }
@@ -51,7 +54,10 @@ export function normalizeAnalysis(raw: unknown, mode: 'gemini' | 'demo', knownAr
   if (!overview) throw new ApiError(502, 'INVALID_MODEL_RESPONSE', 'The model returned no introduction. Please retry with a clearer image.');
   return {
     mode,
-    artwork: { id: knownArtwork && artwork.id === 'met-436535' ? 'met-436535' : 'unidentified', title: textOf(artwork.title, 160) || 'Unidentified artwork', artist: textOf(artwork.artist, 120) || 'Unknown', year: textOf(artwork.year, 60) || 'Unknown' },
+    // This is the curated record already supplied by trustedArtworkContext, not model-created metadata.
+    artwork: verified
+      ? { id: MET_SOURCE.id, title: /[\u3400-\u9fff]/.test(textOf(artwork.title)) ? '麦田与柏树' : 'Wheat Field with Cypresses', artist: 'Vincent van Gogh', year: '1889' }
+      : { id: 'unidentified', title: textOf(artwork.title, 160) || 'Unidentified artwork', artist: 'Unknown', year: 'Unknown' },
     overview, details, sources,
   };
 }
@@ -62,9 +68,17 @@ export function clientAnalysis(raw: unknown): Analysis {
   const input = raw as Analysis;
   if (!['gemini', 'demo'].includes(input.mode) || !input.artwork || !Array.isArray(input.details) || input.details.length > 8) throw new ApiError(400, 'INVALID_CONTEXT', 'Invalid tour context.');
   const normalized = normalizeAnalysis(input, input.mode, input.artwork.id === 'met-436535');
-  if (normalized.details.length !== input.details.length || input.details.some((detail, index) => !detail || detail.number !== index + 1 || !/^[a-zA-Z0-9_-]{1,80}$/.test(detail.id)) || new Set(input.details.map(detail => detail.id)).size !== input.details.length) throw new ApiError(400, 'INVALID_CONTEXT', 'Tour point numbers and stable IDs must be valid and unique.');
+  if (normalized.details.length !== input.details.length || input.details.some(detail => !detail || !Number.isInteger(detail.number) || detail.number < 1 || detail.number > 8 || !/^[a-zA-Z0-9_-]{1,80}$/.test(detail.id)) || new Set(input.details.map(detail => detail.id)).size !== input.details.length || new Set(input.details.map(detail => detail.number)).size !== input.details.length) throw new ApiError(400, 'INVALID_CONTEXT', 'Tour point numbers and stable IDs must be valid and unique.');
   // Keep only stable IDs already present in this bounded context.
-  normalized.details = normalized.details.map((detail, index) => ({ ...detail, id: input.details[index].id }));
+  normalized.details = normalized.details.map((detail, index) => ({ ...detail, id: input.details[index].id, number: input.details[index].number }));
+  if (input.schemaVersion === 2) {
+    normalized.schemaVersion = 2;
+    normalized.recognition = artworkSearchContext(input.recognition);
+    if (!['frame', 'artwork_roi'].includes(input.coordinateSpace || '')) throw new ApiError(400, 'INVALID_CONTEXT', 'Missing coordinate space.');
+    normalized.coordinateSpace = input.coordinateSpace;
+    if (input.roi) normalized.roi = artworkROI(input.roi);
+    if (input.coordinateSpace === 'artwork_roi' && !normalized.roi) throw new ApiError(400, 'INVALID_CONTEXT', 'Missing crop transform.');
+  }
   return normalized;
 }
 
@@ -72,4 +86,32 @@ export function decodeModelJson(value: string): unknown {
   const trimmed = value.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   try { return JSON.parse(trimmed); }
   catch { throw new ApiError(502, 'INVALID_MODEL_RESPONSE', 'The model returned an invalid response. Please retry.'); }
+}
+
+export function artworkCandidates(raw: unknown): ArtworkCandidate[] {
+  if (!Array.isArray(raw)) return [];
+  const result: ArtworkCandidate[] = [];
+  for (const item of raw.slice(0, 8)) {
+    if (!item || typeof item !== 'object') continue;
+    const box = validBox(item.box), identityKey = textOf(item.identityKey, 100), label = textOf(item.label, 160), evidence = textOf(item.evidence, 500);
+    if (!box || !identityKey || !label || !evidence || !Number.isFinite(item.confidence) || item.confidence < 0.8 || item.confidence > 1 || !['planar', 'object'].includes(item.kind)) continue;
+    // Identity uses an appearance key, independent of translated display labels.
+    const id = typeof item.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(item.id) ? item.id : '';
+    if (result.some(value => value.identityKey === identityKey)) continue;
+    result.push({ id, identityKey, label, box, evidence, confidence: item.confidence, kind: item.kind });
+  }
+  return result;
+}
+export function artworkSearchContext(raw: unknown): ArtworkSearch {
+  const value = raw as ArtworkSearch;
+  if (!value || value.schemaVersion !== 2 || !['searching', 'needs_confirmation', 'locked', 'no_artwork', 'uncertain'].includes(value.status) || !Array.isArray(value.candidates) || value.candidates.length > 8) throw new ApiError(400, 'INVALID_LOCK', 'Lock an artwork before analyzing details.');
+  const candidates = artworkCandidates(value.candidates);
+  if (candidates.length !== value.candidates.length || candidates.some(item => !item.id) || new Set(candidates.map(item => item.id)).size !== candidates.length) throw new ApiError(400, 'INVALID_LOCK', 'Invalid artwork candidates.');
+  return { schemaVersion: 2, status: value.status, reason: textOf(value.reason, 600), candidates, observationCount: Number.isInteger(value.observationCount) ? Math.min(3, Math.max(0, value.observationCount)) : 0, ...(candidates.some(item => item.id === value.selectedCandidateId) ? { selectedCandidateId: value.selectedCandidateId } : {}) };
+}
+export function artworkROI(raw: unknown): ArtworkROI {
+  const value = raw as ArtworkROI;
+  const box = validBox(value?.box);
+  if (!value || !box || !textOf(value.frameId, 100) || !Number.isInteger(value.frameWidth) || !Number.isInteger(value.frameHeight) || value.frameWidth < 1 || value.frameHeight < 1 || value.frameWidth > 20000 || value.frameHeight > 20000) throw new ApiError(400, 'INVALID_ROI', 'Provide the original frame size and crop transform.');
+  return { frameId: textOf(value.frameId, 100), frameWidth: value.frameWidth, frameHeight: value.frameHeight, box };
 }

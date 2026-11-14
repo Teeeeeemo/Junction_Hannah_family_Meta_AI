@@ -4,7 +4,7 @@ import { resolve, extname, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { demoAnalysis } from './content.ts';
-import { analyze, answerQuestion, demoQuestion, hasKey, requireKey, restGenerator, runtimeConfig, translateAnalysis, type Generate, type RuntimeConfig } from './gemini.ts';
+import { analyze, searchArtwork, answerQuestion, demoQuestion, hasKey, requireKey, restGenerator, runtimeConfig, translateAnalysis, type Generate, type RuntimeConfig } from './gemini.ts';
 import { attachLiveSocket } from './live.ts';
 import { ApiError, clientAnalysis, imageData, languageOf, textOf } from './validation.ts';
 
@@ -48,7 +48,7 @@ export function createMuseumServer(options: ServerOptions = {}): Server {
         const cfg = config(); json(response, 200, { configured: hasKey(cfg), model: cfg.model, liveModel: cfg.liveModel }); return;
       }
       if (request.method === 'GET' && ['/api/health', '/health'].includes(pathname)) { json(response, 200, { ok: true, service: 'museum-companion' }); return; }
-      if (request.method === 'POST' && ['/api/analyze', '/api/question', '/api/translate'].includes(pathname)) {
+      if (request.method === 'POST' && ['/api/analyze', '/api/artwork-candidates', '/api/question', '/api/translate'].includes(pathname)) {
         if (!/application\/json/i.test(request.headers['content-type'] || '')) throw new ApiError(415, 'JSON_REQUIRED', 'Use application/json.');
         const data = await body(request);
         const language = languageOf(data.language);
@@ -59,11 +59,14 @@ export function createMuseumServer(options: ServerOptions = {}): Server {
         if (requests.length >= 30) throw new ApiError(429, 'RATE_LIMIT', 'Too many requests. Please wait a minute.');
         requests.push(now); inFlight++;
         try {
-          if (pathname === '/api/analyze') {
+          if (pathname === '/api/artwork-candidates') {
+            if (data.demo === true) throw new ApiError(400, 'LIVE_SEARCH_REQUIRED', 'Artwork search requires real image recognition.');
+            json(response, 200, await searchArtwork(imageData(data.image), language, data.previous, textOf(data.confirmedCandidateId, 80), options.generate || restGenerator(cfg)));
+          } else if (pathname === '/api/analyze') {
             // Validate actual image input even in demo mode: the UI must supply its input frame.
             const image = imageData(data.image);
             if (data.demo === true) { json(response, 200, demoAnalysis(language)); return; }
-            json(response, 200, await analyze(image, language, textOf(data.artworkId, 100), options.generate || restGenerator(cfg)));
+            json(response, 200, await analyze(image, language, textOf(data.artworkId, 100), options.generate || restGenerator(cfg), { lock: data.lock, roi: data.roi }));
           } else if (pathname === '/api/translate') {
             const context = clientAnalysis(data.analysis);
             if ((data.demo === true) !== (context.mode === 'demo')) throw new ApiError(400, 'DEMO_CONTEXT', 'Translation mode must match the current tour.');

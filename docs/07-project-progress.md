@@ -1,5 +1,7 @@
 # Museum Companion：项目进度与待办
 
+> 2026-11-15：本页下文保留此前交付基线。最新核心交互修复、五小时排期与分版本提交规则见 [交互收口计划](13-five-hour-interaction-plan.md)，模拟器结果见 [测试进度](10-ios-simulator-test-progress.md)。
+
 更新日期：2026-11-14（Europe/Helsinki）  
 代码分支：`feat/museum-simulator-mvp`  
 本文件记录当前总进度；早期 PRD／技术计划中的设备状态保留为历史记录。

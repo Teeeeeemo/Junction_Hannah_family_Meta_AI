@@ -31,6 +31,13 @@ struct MuseumCompanionApp: App {
             name == URL(fileURLWithPath: name).lastPathComponent {
             let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             await model.importVideo(from: folder.appendingPathComponent(name))
+            if ProcessInfo.processInfo.arguments.contains("--museum-cloud-test"),
+              let data = try? Data(contentsOf: folder.appendingPathComponent("museum-cloud-entrance.json")),
+              let config = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+              let link = config["link"] {
+              model.referenceArtworkID = config["artworkId"] ?? ""
+              await model.connectBackend(link: link)
+            }
           }
         }
       }

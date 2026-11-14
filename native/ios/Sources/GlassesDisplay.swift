@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import MWDATCore
 import MWDATDisplay
 
@@ -13,7 +14,8 @@ final class GlassesDisplay {
   private var page = 0
   private var pending = false
   private var renderTask: Task<Void, Never>?
-  private var generation = 0
+  private var epoch = SessionEpoch()
+  private var inspectionImage: UIImage?
   var onError: ((String) -> Void)?
   var onSelect: ((Int?) -> Void)?
   var onTogglePlayback: (() -> Void)?
@@ -21,12 +23,12 @@ final class GlassesDisplay {
   var onCycleRate: (() -> Void)?
 
   func attach(to session: DeviceSession) throws {
-    generation += 1; let run = generation
+    let run = epoch.begin()
     let capability = try session.addDisplay(); display = capability
     capability.statePublisher.listen { [weak self] state in
       let started = state == .started
       Task { @MainActor [weak self] in
-        guard let self, self.generation == run else { return }
+        guard let self, self.epoch.accepts(run) else { return }
         self.ready = started
         if started { self.render() }
       }
@@ -39,28 +41,36 @@ final class GlassesDisplay {
     }
     snapshot = value; render()
   }
+  func showInspection(_ image: UIImage?) { inspectionImage = image; render() }
   func stop() {
-    generation += 1
+    epoch.invalidate()
     ready = false; pending = false; renderTask?.cancel(); renderTask = nil
-    listeners.clear(); display?.stop(); display = nil; snapshot = TourSnapshot(); page = 0
+    listeners.clear(); display?.stop(); display = nil; snapshot = TourSnapshot(); page = 0; inspectionImage = nil
   }
   private func render() {
     pending = true
-    guard ready, renderTask == nil, let display else { return }
+    guard ready, renderTask == nil, let display, let run = epoch.current else { return }
     // Coalesce and serialize sends: an old caption must never overwrite
     // the UI after a user selects a different point.
     renderTask = Task { [weak self] in
       guard let self else { return }
-      while self.ready && self.pending && !Task.isCancelled {
+      while self.epoch.accepts(run) && self.ready && self.pending && !Task.isCancelled {
         self.pending = false
-        let view = self.view()
+        let view = self.view(run: run)
         do { try await display.send(view) }
-        catch { if !Task.isCancelled { self.onError?(error.localizedDescription) } }
+        catch { if self.epoch.accepts(run) && !Task.isCancelled { self.onError?(error.localizedDescription) } }
       }
-      if !Task.isCancelled { self.renderTask = nil }
+      if self.epoch.accepts(run) && !Task.isCancelled { self.renderTask = nil }
     }
   }
-  private func view() -> FlexBox {
+  nonisolated private func dispatch(run: SessionEpoch.Token,
+    action: @escaping @MainActor @Sendable (GlassesDisplay) -> Void) {
+    Task { @MainActor [weak self] in
+      guard let self, self.ready, self.epoch.accepts(run) else { return }
+      action(self)
+    }
+  }
+  private func view(run: SessionEpoch.Token) -> FlexBox {
     let value = snapshot, zh = value.language == "zh"
     let points = HUDLayout.points(on: page, from: value.points)
     return FlexBox(direction: .row, spacing: 18, crossAlignment: .stretch) {
@@ -72,41 +82,44 @@ final class GlassesDisplay {
         if value.subtitles && !value.sentence.isEmpty {
           Text(HUDLayout.compact(value.sentence, latin: 88, cjk: 32), style: .meta)
         }
-      }.flexGrow(7)
+      }.flexGrow(inspectionImage == nil ? 7 : 1)
       if !value.points.isEmpty {
         FlexBox(direction: .column, spacing: 6) {
+          if let inspectionImage {
+            MWDATDisplay.Image(image: inspectionImage, sizePreset: .fill).flexGrow(1)
+          }
           Text(zh ? "细节探索" : "LOOK CLOSER", style: .meta, color: .secondary)
           for point in points {
             ButtonGroup {
               Button(label: "\(point.number). \(HUDLayout.compact(point.title, latin: 16, cjk: 7))",
                 style: value.selectedNumber == point.number ? .primary : .secondary,
-                onClick: { [weak self] in Task { @MainActor in self?.onSelect?(point.number) } })
+                onClick: { [weak self] in self?.dispatch(run: run) { $0.onSelect?(point.number) } })
             }
           }
           if value.points.count > HUDLayout.pointsPerPage {
             ButtonGroup {
               Button(label: zh ? "更多细节 ›" : "More points ›", style: .secondary, onClick: { [weak self] in
-                Task { @MainActor in
-                  guard let self else { return }
-                  let count = (self.snapshot.points.count + HUDLayout.pointsPerPage - 1) / HUDLayout.pointsPerPage
-                  self.page = (self.page + 1) % count; self.render()
+                self?.dispatch(run: run) { display in
+                  let count = (display.snapshot.points.count + HUDLayout.pointsPerPage - 1) / HUDLayout.pointsPerPage
+                  guard count > 0 else { return }
+                  display.page = (display.page + 1) % count; display.render()
                 }
               })
             }
           }
           ButtonGroup {
             Button(label: value.playing ? (zh ? "暂停" : "Pause") : (zh ? "播放" : "Play"), style: .secondary,
-              onClick: { [weak self] in Task { @MainActor in self?.onTogglePlayback?() } })
+              onClick: { [weak self] in self?.dispatch(run: run) { $0.onTogglePlayback?() } })
             Button(label: zh ? "下一处" : "Next", style: .secondary,
-              onClick: { [weak self] in Task { @MainActor in self?.onNext?() } })
+              onClick: { [weak self] in self?.dispatch(run: run) { $0.onNext?() } })
           }
           ButtonGroup {
             Button(label: value.rateLabel, style: .secondary,
-              onClick: { [weak self] in Task { @MainActor in self?.onCycleRate?() } })
+              onClick: { [weak self] in self?.dispatch(run: run) { $0.onCycleRate?() } })
             Button(label: zh ? "总览" : "Intro", style: .secondary,
-              onClick: { [weak self] in Task { @MainActor in self?.onSelect?(nil) } })
+              onClick: { [weak self] in self?.dispatch(run: run) { $0.onSelect?(nil) } })
           }
-        }.flexGrow(3)
+        }.flexGrow(inspectionImage == nil ? 3 : 1)
       }
     }.padding(12).background(.none)
   }

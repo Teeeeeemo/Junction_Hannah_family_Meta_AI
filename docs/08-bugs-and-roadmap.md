@@ -1,5 +1,7 @@
 # Museum Companion：已知问题与剩余功能
 
+> 2026-11-15：本页下文保留此前交付基线。最新核心交互修复、五小时排期与分版本提交规则见 [交互收口计划](13-five-hour-interaction-plan.md)，模拟器结果见 [测试进度](10-ios-simulator-test-progress.md)。
+
 更新：2026-11-14（Europe/Helsinki）。需求依据为 [PRD v0.2](01-product-requirements.md) 及后续确认的 Gemini 语音、小目标艺术品聚焦、无眼镜调试要求。
 
 本文以最终原生眼镜体验为验收对象。Web 原型已实现、Swift 代码已写、本地逻辑检查、Xcode 构建、手机运行和实际佩戴分别记录，不能相互替代。

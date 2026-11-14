@@ -1,5 +1,7 @@
 # Museum Companion：iOS DAT 相机接入工程
 
+> 2026-11-15 最新：0.2.0 / build 4 源码的完整离线模拟器 UI 7/7 通过，基础检查与生产构建通过。原生 Live、作品锁定／裁剪、Vision 基线和局部窗已有实现；原生云端完整闭环仍需单独验收，镜片现实框绘制和光学映射尚未实现。详见 [最新测试记录](../../docs/10-ios-simulator-test-progress.md) 和 [五小时计划](../../docs/13-five-hour-interaction-plan.md)。下文 0.1.x 状态保留为历史说明。
+
 状态（2026-11-14 晚）：0.1.2 / build 3（`c0154ac`）已发布并通过 Sideloadly 安装到指定 iPhone，用户确认新版打开。本次新增模拟器签名／会话启动修复与 XCUITest，实际视频出帧、离线样例和部分交互已运行；最新 UI suite 2 通过／3 失败。修复源码尚未打包或安装。详见[测试进度](../../docs/10-ios-simulator-test-progress.md)及[Mac mini 接力任务](../../docs/11-mac-mini-codex-handoff-prompt.md)。三个产品 BUG 仍未修复。
 
 ## 0.1.2：无眼镜调试
