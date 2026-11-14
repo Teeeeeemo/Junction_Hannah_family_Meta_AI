@@ -5,6 +5,7 @@ import { createTracker, drawDemoScene, projectBox } from './vision';
 import type { Tracker } from './vision';
 import { LiveAudioClient, setBrowserSpeechRate, speakBrowser, stopBrowserSpeech, unlockAudio } from './audio';
 import { sentencesOf } from './captions';
+import { cameraFailure, hasVideoFrame, openBrowserVideo, type CameraFailure } from './camera-input';
 import { PLAYBACK_RATES, isPlaybackRate, parseSpeedCommand, remainingNarration, type PlaybackRate } from './playback-speed';
 import './app.css';
 
@@ -45,8 +46,9 @@ export default function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [seen, setSeen] = useState<string[]>([]);
-  const [inputKind, setInputKind] = useState<InputKind>('image');
-  const [imageUrl, setImageUrl] = useState('/artworks/wheat-field.jpg');
+  const [inputKind, setInputKind] = useState<InputKind>('camera');
+  const [imageUrl, setImageUrl] = useState('');
+  const [cameraStatus, setCameraStatus] = useState<'idle'|'requesting'|'ready'|CameraFailure>('idle');
   const [imageReady, setImageReady] = useState(false);
   const [motion, setMotion] = useState(false);
   const [overlayOnly, setOverlayOnly] = useState(false);
@@ -114,6 +116,7 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
+    if(!imageUrl){imageRef.current=null;setImageReady(false);return;}
     const image = new Image(); image.onload = () => { imageRef.current = image; setImageReady(true); };
     image.onerror = () => { setError(cn(languageRef.current,'Could not load the artwork. Upload an image to continue.','无法读取作品图片，请上传一张图片。')); setImageReady(false); };
     setImageReady(false); image.src = imageUrl;
@@ -133,8 +136,10 @@ export default function App() {
     liveRef.current?.setPlaybackRate(rate); setBrowserSpeechRate(rate);
   }, []);
   const cleanupInput = useCallback(() => {
+    ++inputGeneration.current;
     cameraRef.current?.getTracks().forEach(track => track.stop()); cameraRef.current = null;
     videoRef.current?.pause(); if(videoRef.current) videoRef.current.srcObject = null;
+    videoRef.current=null;
     trackerRef.current?.dispose(); trackerRef.current = null;
   }, []);
   const reset = useCallback(() => {
@@ -257,11 +262,15 @@ export default function App() {
   };
 
   const startTour = async (isDemo: boolean) => {
+    if(phase==='analyzing'||cameraStatus==='requesting')return;
+    if(inputKind==='camera'&&!hasVideoFrame(videoRef.current)) {if(!await useCamera())return;}
     if(!sceneRef.current || !imageReady && inputKind==='image')return;
+    if(inputKind!=='image'&&!hasVideoFrame(videoRef.current)){setError(cn(languageRef.current,'Waiting for a decoded video frame. Keep the artwork in view and try again.','正在等待真实视频帧，请保持对准作品后重试。'));return;}
     await unlockAudio().catch(()=>{}); reset(); analyzedDemo.current=isDemo; setDemo(isDemo); setPhase('analyzing'); const token=++runRef.current;
     try {
       const image=imageRef.current;
-      const reference=inputKind==='image'&&image ? snapshot(image,image.naturalWidth,image.naturalHeight) : snapshot(sceneRef.current,W,W);
+      const video=videoRef.current;
+      const reference=inputKind==='image'&&image ? snapshot(image,image.naturalWidth,image.naturalHeight) : snapshot(video!,video!.videoWidth,video!.videoHeight);
       modelReference.current={width:reference.width,height:reference.height};
       const result=await post<Analysis>('/api/analyze',{image:reference.toDataURL('image/jpeg',.85),language:languageRef.current,artworkId: inputKind==='image'&&imageUrl==='/artworks/wheat-field.jpg'?'met-436535':undefined,demo:isDemo});
       if(token!==runRef.current)return;
@@ -365,19 +374,29 @@ export default function App() {
   };
 
   const loadFile=async(file:File)=>{
-    reset();cleanupInput();++inputGeneration.current;setMotion(false);
+    reset();cleanupInput();++inputGeneration.current;setMotion(false);setCameraStatus('idle');
     if(file.type.startsWith('video/')){
       const video=document.createElement('video');video.src=URL.createObjectURL(file);video.loop=true;video.muted=true;video.playsInline=true;videoRef.current=video;
       try{await video.play();setInputKind('video');}catch{setError(cn(languageRef.current,'Could not play this video. Try an MP4 file.','无法播放该视频，请尝试 MP4。'));}
     }else if(file.type.startsWith('image/')){setInputKind('image');setImageUrl(URL.createObjectURL(file));}
   };
   const useCamera=async()=>{
-    reset();cleanupInput();setMotion(false);
+    reset();cleanupInput();setMotion(false);setInputKind('camera');setImageUrl('');setCameraStatus('requesting');
+    const generation=inputGeneration.current;
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}},audio:false});
-      cameraRef.current=stream;const video=document.createElement('video');video.srcObject=stream;video.muted=true;video.playsInline=true;videoRef.current=video;await video.play();setInputKind('camera');
-    }catch(e){setError(cn(languageRef.current,'Camera access was not available. Upload an image or video instead.','无法访问摄像头，可改为上传图片或视频。'));}
+      const {stream,video}=await openBrowserVideo(navigator.mediaDevices);
+      if(generation!==inputGeneration.current){stream.getTracks().forEach(track=>track.stop());video.pause();video.srcObject=null;return false;}
+      cameraRef.current=stream;videoRef.current=video;setCameraStatus('ready');setSettingsOpen(false);
+      stream.getTracks().forEach(track=>track.addEventListener('ended',()=>{if(generation!==inputGeneration.current)return;cleanupInput();interrupt();setCameraStatus('unavailable');setNotice(cn(languageRef.current,'Camera disconnected. Reconnect before scanning.','相机已断开，请重新连接后识别。'));}));
+      return true;
+    }catch(e){
+      if(generation!==inputGeneration.current)return false;
+      const reason=cameraFailure(e);setCameraStatus(reason);
+      setError(reason==='unsupported'?cn(languageRef.current,'This Web App cannot access the glasses camera. A paired-phone DAT app is required to connect its video stream.','此眼镜网页无法读取眼镜相机，需要通过配对手机上的 DAT 应用接入视频流。'):reason==='denied'?cn(languageRef.current,'Camera permission was denied. Allow camera access, then scan again.','相机权限未获允许，请授权后重新扫描。'):cn(languageRef.current,'No live video frame was received. Reconnect the camera and try again.','尚未收到实时视频帧，请重新连接相机后重试。'));
+      return false;
+    }
   };
+  const useIncludedArtwork=()=>{reset();cleanupInput();setCameraStatus('idle');setInputKind('image');setImageUrl('/artworks/wheat-field.jpg');};
 
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
@@ -417,10 +436,10 @@ export default function App() {
         <div className="eyebrow">THE ART OF NOTICING</div>
         <h1>{strings.title}</h1>
         <p className="welcome-subtitle">{strings.subtitle}</p>
-        <div className="artwork-caption"><span className="fine-line"/><span>{imageUrl==='/artworks/wheat-field.jpg' && inputKind==='image' ? <>Vincent van Gogh<br/><strong>Wheat Field with Cypresses</strong><small>1889 · The Metropolitan Museum of Art</small></> : <><strong>{inputKind==='camera'?cn(language,'Your camera perspective','你的摄像头视角'):inputKind==='video'?cn(language,'Your uploaded video','你上传的视频'):cn(language,'Your uploaded artwork','你上传的作品')}</strong><small>{cn(language,'The guide will identify what is in your frame.','导览将识别当前画面中的作品。')}</small></>}</span></div>
+        <div className="artwork-caption"><span className="fine-line"/><span>{imageUrl==='/artworks/wheat-field.jpg' && inputKind==='image' ? <>Vincent van Gogh<br/><strong>Wheat Field with Cypresses</strong><small>1889 · The Metropolitan Museum of Art</small></> : <><strong>{inputKind==='camera'?cameraStatus==='ready'?cn(language,'Live camera connected','实时相机已连接'):cn(language,'Aim at an artwork','请对准眼前的作品'):inputKind==='video'?cn(language,'Your uploaded video','你上传的视频'):cn(language,'Your uploaded artwork','你上传的作品')}</strong><small>{inputKind==='camera'&&cameraStatus==='unsupported'?cn(language,'Waiting for the paired-phone camera connection.','等待配对手机接入眼镜视频流。'):cn(language,'Live frames are required before recognition begins.','收到真实画面后，开始识别与讲解。')}</small></>}</span></div>
         <div className="start-actions">
-          <WearableButton title={phase==='analyzing'?strings.analyzing:strings.start} onClick={()=>void startTour(false)} disabled={phase==='analyzing'||(!imageReady&&inputKind==='image')}/>
-          <button className="demo-link" onClick={()=>void startTour(true)} disabled={phase==='analyzing'||inputKind!=='image'||imageUrl!=='/artworks/wheat-field.jpg'}>{strings.demo}<span>↗</span></button>
+          <WearableButton title={cameraStatus==='requesting'?cn(language,'Connecting camera…','正在连接相机…'):phase==='analyzing'?strings.analyzing:inputKind==='camera'?cn(language,'Scan the artwork','识别眼前作品'):strings.start} onClick={()=>void startTour(false)} disabled={phase==='analyzing'||cameraStatus==='requesting'||(!imageReady&&inputKind==='image')}/>
+          {inputKind==='camera'?<button className="demo-link" onClick={useIncludedArtwork}>{cn(language,'Choose the demo artwork','手动选择演示画作')}<span>↗</span></button>:<button className="demo-link" onClick={()=>void startTour(true)} disabled={phase==='analyzing'||inputKind!=='image'||imageUrl!=='/artworks/wheat-field.jpg'}>{strings.demo}<span>↗</span></button>}
         </div>
         <div className="connection-note"><span className={`status-light ${config?.configured?'online':''}`}/>{config?.configured?strings.keyReady:strings.noKey}{!config?.configured&&<span className="hint"> · .env.local</span>}</div>
       </section>}
@@ -457,7 +476,7 @@ export default function App() {
         <label className="field-label">{cn(language,'LANGUAGE','语言')}</label><div className="segmented"><button className={language==='en'?'chosen':''} onClick={()=>changeLanguage('en')}>English</button><button className={language==='zh'?'chosen':''} onClick={()=>changeLanguage('zh')}>中文</button></div>
         <label className="field-label" htmlFor="settings-playback-speed">{cn(language,'NARRATION SPEED','语音播放倍速')}</label><select id="settings-playback-speed" className="settings-speed" value={playbackRate} onChange={event=>changePlaybackSpeed(Number(event.target.value))}>{PLAYBACK_RATES.map(rate=><option key={rate} value={rate}>{rate}×</option>)}</select><small className="speed-hint">{cn(language,'Say “set playback speed to 1.5”, “speak slower”, or “normal speed”.','可说「调到一点五倍速」「慢一点」「恢复正常语速」。')}</small>
         <label className="field-label">{strings.input}</label><div className="input-actions"><button onClick={()=>uploadRef.current?.click()}>↑ {strings.upload}</button><button onClick={()=>void useCamera()}>◉ {strings.camera}</button></div>
-        <button className="text-button" onClick={()=>{reset();cleanupInput();setInputKind('image');setImageUrl('/artworks/wheat-field.jpg');}}>{cn(language,'Use the included Van Gogh artwork','使用内置梵高作品')}<span>↗</span></button>
+        <button className="text-button" onClick={useIncludedArtwork}>{cn(language,'Use the included Van Gogh artwork','使用内置梵高作品')}<span>↗</span></button>
         <label className="toggle-row"><span>{strings.motion}<small>{cn(language,'Synthetic motion for the reference image','仅对参考图进行合成移动')}</small></span><input type="checkbox" checked={motion} disabled={inputKind!=='image'} onChange={e=>setMotion(e.target.checked)}/></label>
         <label className="toggle-row"><span>{strings.overlay}<small>{cn(language,'Use your simulator environment background','使用模拟器自己的环境背景')}</small></span><input type="checkbox" checked={overlayOnly} onChange={e=>setOverlayOnly(e.target.checked)}/></label>
         <div className="config-state"><span className={`status-light ${config?.configured?'online':''}`}/>{config?.configured?strings.keyReady:strings.noKey}<small>{config?.model||'Gemini'} · {cn(language,'Key stays on your local server','密钥只保留在本地后端')}</small></div>

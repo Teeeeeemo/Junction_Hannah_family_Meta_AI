@@ -1,14 +1,18 @@
 # Museum Companion — Meta Ray-Ban Display 博物馆导览
 
-项目状态：Simulator MVP · 2026-11-14（Europe/Helsinki）
+项目状态：Web／Simulator MVP + iOS DAT 接入准备 · 2026-11-14（Europe/Helsinki）
+
+最新已完成、待验证、阻塞与待办见 **[项目进度与待办](docs/07-project-progress.md)**。
 
 先进行通识语音介绍，再自动识别作品细节点并在眼镜屏幕右侧显示编号列表，从 1 号点位开始讲解；用户可随时打断并选择关心的点位。自动讲解与用户选点讲解时，检测框均持续跟随当前细节。
 
 ## 当前阶段
 
-已实现本地 Chrome Simulator MVP：React + 官方 Meta UI Toolkit、Gemini 视觉／问答／Live 语音、本地 OpenCV 追踪、右侧点位列表、自动首点讲解、打断改选、整句字幕、0.75×–2×播放倍速及局部放大。64 项自动测试与生产构建通过，真实 Gemini 调速指令已联调。
+已实现本地 Chrome Simulator MVP：React + 官方 Meta UI Toolkit、Gemini 视觉／问答／Live 语音、本地 OpenCV 追踪、右侧点位列表、自动首点讲解、打断改选、整句字幕、0.75×–2×播放倍速及局部放大。71 项自动测试与生产构建通过，真实 Gemini 调速指令已联调。
 
-设备更新：用户已取得 Meta Ray-Ban Display，通过 iPhone 的 Meta AI App 完成配对并开启 Developer Mode。截图显示 Meta AI App 299.0.0.26.159、设备在线、DAT SDK 1.0.0.0；该 SDK 版本不是固件版本。Web apps 添加入口已确认可见。iOS DAT 接入、眼镜端显示／相机／音频与现实对齐仍待实现和真机验证，当前没有可安装的 iOS App。
+默认入口现为实时相机输入：收到真实解码帧后才识别，内置图片保留为手动演示入口。眼镜 Web App 没有相机采集权限；已准备 [iOS DAT 相机工程](native/ios/README.md)，但本机 Xcode 环境尚未就绪，工程仅完成语法和配置检查，尚未编译、签名或真机取流。
+
+设备更新：用户已取得 Meta Ray-Ban Display，通过 iPhone 的 Meta AI App 完成配对并开启 Developer Mode。截图显示 Meta AI App 299.0.0.26.159、设备在线、DAT SDK 1.0.0.0；该 SDK 版本不是固件版本。Web apps 添加入口已确认可见。iOS DAT 接入代码已准备；眼镜端相机／显示并发、音频与现实对齐仍待编译和真机验证，当前没有已构建的可安装 iOS App。
 
 ## 运行
 
@@ -20,7 +24,7 @@ npm start
 
 在安装 Simulator 插件的 Google Chrome 打开 **http://127.0.0.1:4173/**，再点击扩展图标开启模拟器。首次配置参考 `.env.example`，将密钥填在被 Git 忽略的 `.env.local` 中；已有配置不要覆盖。普通视觉模型使用 `gemini-3.8-flash`，Live 使用经本机接入验证的 `gemini-2.5-flash-native-audio-preview-12-2025`，可按账号能力修改。
 
-点击 **Begin your visit／开始导览** 使用真实 Gemini；**Explore offline demo／体验离线演示** 是明确标记的预设内容。摄像头与麦克风只在用户启用后申请权限。
+默认点击 **Scan the artwork／识别眼前作品** 请求当前浏览器相机，收到实际视频帧后使用真实 Gemini；眼镜 Web 无相机权限时明确提示配对手机 DAT 接入，不回退到预设画作。手动选择演示画作后，可真实分析图片或明确选择 **Explore offline demo／体验离线演示**。摄像头与麦克风只在用户启用后申请权限。
 
 详细操作、验证结果与限制见 [MVP 运行与验收记录](docs/05-mvp-runbook.md)。
 
@@ -34,6 +38,7 @@ npm start
 4. [开发、测试与交付计划](docs/04-validation-and-delivery.md)：48 小时安排、可行性验证、测试用例和交付清单。
 5. [MVP 运行与验收记录](docs/05-mvp-runbook.md)：本次实现、启动步骤、真实 Gemini 联调与未完成验收。
 6. [真机网页接入](docs/06-device-preview.md)：临时 HTTPS 入口、Meta AI App 添加步骤、访问控制与验证范围。
+7. [项目进度与待办](docs/07-project-progress.md)：最新总进度、验证层级、iOS 环境阻塞及接下来执行顺序。
 
 ## 已确定与待确定
 

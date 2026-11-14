@@ -48,6 +48,6 @@ cloudflared tunnel --url http://127.0.0.1:4174 --no-autoupdate --protocol http2 
 
 经用户明确授权，公开 HTTPS 最小联调已通过：未授权 API 返回 401；完整入口、已授权配置请求和前端 JS 均返回 200；配置确认 Gemini 已就绪。真实 Live 请求通过该 HTTPS 通道握手并返回 14 个音频块，一次请求约 7.5 秒完成。此检查不等于眼镜实际启动、扬声器播放或麦克风权限已验证；真实佩戴结果待用户反馈。当前临时访问码与完整链接只保留在本机临时会话和交付对话中。
 
-这次入口继续使用作品参考图片；眼镜上的网页能显示界面，不表示已获得眼镜实时相机或麦克风权限。后续仍需通过 iOS DAT 或明确支持的接口完成真实输入与相机到佩戴视野的校准。
+最新 Web 默认流程为实时相机优先，参考图片保留为手动演示入口。眼镜上的网页能显示界面，不表示已获得眼镜实时相机或麦克风权限；遇到不支持的采集 API 时会提示配对手机 DAT 接入。后续仍需通过 iOS DAT 完成真实输入与相机到佩戴视野的校准，当前接入进度见[项目进度](07-project-progress.md)。
 
 Mac、应用服务、访问入口和通道都须保持运行。停止通道进程会立即使该地址失效，重开通道通常会产生新地址；访问码最长 8 小时有效。需要结束测试时，关闭 `cloudflared` 和 `device:preview` 进程即可，本地 Simulator 服务可以保留。[Cloudflare Quick Tunnels 说明](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
