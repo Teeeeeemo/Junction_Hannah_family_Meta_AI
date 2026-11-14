@@ -6,9 +6,9 @@
 
 ## 当前阶段
 
-已实现本地 Chrome Simulator MVP：React + 官方 Meta UI Toolkit、Gemini 视觉／问答／Live 语音、本地 OpenCV 追踪、右侧点位列表、自动首点讲解、打断改选、整句字幕、0.75×–2×播放倍速及局部放大。56 项自动测试与生产构建通过，真实 Gemini 调速指令已联调。
+已实现本地 Chrome Simulator MVP：React + 官方 Meta UI Toolkit、Gemini 视觉／问答／Live 语音、本地 OpenCV 追踪、右侧点位列表、自动首点讲解、打断改选、整句字幕、0.75×–2×播放倍速及局部放大。64 项自动测试与生产构建通过，真实 Gemini 调速指令已联调。
 
-设备更新：用户已取得 Meta Ray-Ban Display，并通过 iPhone 的 Meta AI App 完成配对。Developer Mode 尚待确认；iOS DAT 接入、眼镜端显示／相机／音频与现实对齐仍待实现和真机验证。当前没有可安装的 iOS App。
+设备更新：用户已取得 Meta Ray-Ban Display，通过 iPhone 的 Meta AI App 完成配对并开启 Developer Mode。截图显示 Meta AI App 299.0.0.26.159、设备在线、DAT SDK 1.0.0.0；该 SDK 版本不是固件版本。Web apps 添加入口已确认可见。iOS DAT 接入、眼镜端显示／相机／音频与现实对齐仍待实现和真机验证，当前没有可安装的 iOS App。
 
 ## 运行
 
@@ -33,6 +33,7 @@ npm start
 3. [平台与 API 调研](docs/03-platform-and-api-research.md)：iOS／Android 配置、官方 GitHub 示例、云服务接入建议和证据。
 4. [开发、测试与交付计划](docs/04-validation-and-delivery.md)：48 小时安排、可行性验证、测试用例和交付清单。
 5. [MVP 运行与验收记录](docs/05-mvp-runbook.md)：本次实现、启动步骤、真实 Gemini 联调与未完成验收。
+6. [真机网页接入](docs/06-device-preview.md)：临时 HTTPS 入口、Meta AI App 添加步骤、访问控制与验证范围。
 
 ## 已确定与待确定
 
@@ -48,6 +49,6 @@ npm start
 | 当前手机平台 | 已通过 iPhone 配对，接下来按 iOS 路线接入；Mac 的完整 Xcode 构建环境尚未就绪 |
 | 首批 3 幅画作、打印或屏幕展示 | 本文建议，尚未由用户最终选定 |
 | Gemini API | 已由用户本地配置；真实视觉、问答与 Live 音频接入验证成功 |
-| 眼镜设备权限 | 设备已取得并配对；Developer Mode 与实际 SDK 权限待验证 |
+| 眼镜设备权限 | 已取得并配对、Developer Mode 已开启；实际 SDK 权限仍待验证 |
 
-下一步确认 Meta AI App 的 Developer Mode，准备 iOS 构建环境并执行 Gate 0；继续保留 Simulator 作为原型与回归入口。原型测试不代表 A 版现实对齐已经通过。早期 PRD 与技术计划中的设备状态属于当时的记录，最新设备和平台状态以此处为准。
+下一步通过 HTTPS 入口完成 Web 真机显示验证，准备 iOS 构建环境并执行 Gate 0；继续保留 Simulator 作为原型与回归入口。原型测试不代表 A 版现实对齐已经通过。早期 PRD 与技术计划中的设备状态属于当时的记录，最新设备和平台状态以此处为准。

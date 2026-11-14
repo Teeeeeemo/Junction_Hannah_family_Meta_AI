@@ -7,6 +7,7 @@
     "dev": "npm run build && node --import tsx server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "node --import tsx server/index.ts",
+    "device:preview": "node --import tsx server/device-preview.ts",
     "test": "vitest run"
   },
   "dependencies": {
