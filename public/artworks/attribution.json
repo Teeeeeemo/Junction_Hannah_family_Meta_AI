@@ -1,0 +1,14 @@
+{
+  "id": "met-436535",
+  "title": "Wheat Field with Cypresses",
+  "artist": "Vincent van Gogh",
+  "year": "1889",
+  "museum": "The Metropolitan Museum of Art",
+  "objectNumber": "1993.132",
+  "source": "https://www.metmuseum.org/art/collection/search/436535",
+  "metadata": "https://collectionapi.metmuseum.org/public/collection/v1/objects/436535",
+  "imageSource": "https://images.metmuseum.org/CRDImages/ep/web-large/DP-42549-001.jpg",
+  "rights": "Public Domain, as identified by The Met object record",
+  "accessedAt": "2026-11-14",
+  "note": "Bundled reference image for the simulator. Synthetic movement is a test scene, not recorded glasses footage."
+}
