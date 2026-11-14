@@ -13,8 +13,11 @@ common=(-project "$repo_root/native/ios/MuseumCompanion.xcodeproj"
 
 case "$mode" in
   simulator)
+    # DAT initialization requires a properly sealed simulator app. Local ad hoc
+    # signing needs no Apple account; disabling signing caused Internal error.
     xcodebuild "${common[@]}" -configuration Debug \
-      -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      -destination 'generic/platform=iOS Simulator' \
+      CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO build
     ;;
   unsigned|signed)
     archive="$output_dir/MuseumCompanion-$mode.xcarchive"

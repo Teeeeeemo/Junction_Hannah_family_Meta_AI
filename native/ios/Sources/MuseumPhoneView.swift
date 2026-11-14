@@ -63,6 +63,7 @@ struct MuseumPhoneView: View {
             VStack(alignment: .leading, spacing: 8) {
               Text(text("NATIVE GLASSES DISPLAY · SIMULATED", "原生眼镜界面预览 · 模拟")).font(.caption).foregroundStyle(gold)
               MockDisplayPreview(view: display).id(ObjectIdentifier(display)).frame(height: 320)
+                .accessibilityIdentifier("mock-display")
                 .background(.black).clipShape(RoundedRectangle(cornerRadius: 14))
               Text(text("Tap the preview's buttons to test the actual DAT click handlers. This preview cannot validate optical alignment.",
                 "可点击预览中的按钮，测试实际 DAT 交互；此预览不能验收镜片现实对齐。"))
@@ -95,6 +96,7 @@ struct MuseumPhoneView: View {
                 .disabled(!model.streaming || model.recognizing || !model.backendReady)
               Spacer()
               Button(text("End visit", "结束导览")) { model.stop() }
+                .accessibilityIdentifier("end-visit")
             } else {
               Button {
                 Task { await model.startCamera() }
@@ -102,14 +104,18 @@ struct MuseumPhoneView: View {
                 Label(model.connecting ? text("Connecting…", "正在连接…") : model.inputMode.isMock ? text("Start simulated preview", "开始模拟预览") : text("Begin your visit", "开始导览"), systemImage: "camera")
                   .frame(maxWidth: .infinity).padding(.vertical, 8)
               }.buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("start-preview")
                 .disabled(!model.canStart)
             }
           }
           VStack(alignment: .leading, spacing: 5) {
-            Text(model.status)
+            Text(model.status).accessibilityIdentifier("camera-status")
             Text(text(model.inputMode.isMock ? "Simulated input frames: " : "Live glasses frames: ", model.inputMode.isMock ? "模拟输入帧数：" : "真实眼镜帧数：") + String(model.frameCount))
           }.font(.caption).foregroundStyle(.secondary)
-          if !model.error.isEmpty { Text(model.error).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("camera-state")
+            .accessibilityValue("frames=\(model.frameCount); streaming=\(model.streaming); sdk=\(model.sdkReady); source=\(model.inputMode.rawValue)")
+          if !model.error.isEmpty { Text(model.error).font(.callout).foregroundStyle(.red).textSelection(.enabled).accessibilityIdentifier("camera-error") }
           Text(text("Live camera + spoken guide. Keep this app in the foreground. Detail tracking and spatial boxes are still in development.",
             "实时相机与语音导览。使用时请保持 App 在前台；持续细节追踪与现实对齐框仍待接入。"))
             .font(.caption).foregroundStyle(.secondary)
@@ -141,6 +147,7 @@ struct MuseumPhoneView: View {
       })) {
         ForEach(DebugInputMode.allCases, id: \.self) { mode in Text(sourceName(mode)).tag(mode) }
       }.pickerStyle(.menu).disabled(model.changingInput || model.connecting)
+        .accessibilityIdentifier("input-source")
       if model.inputMode.isMock {
         Text(text("SIMULATION · NO PHYSICAL GLASSES", "模拟调试 · 无需实体眼镜"))
           .font(.caption.bold()).foregroundStyle(.orange)
@@ -151,6 +158,7 @@ struct MuseumPhoneView: View {
             Spacer()
             Button(text("Replay from start", "从头回放")) { Task { await model.replayVideo() } }
               .disabled(!model.videoReady || model.changingInput || model.connecting)
+              .accessibilityIdentifier("replay-video")
           }
           if !model.videoName.isEmpty { Text(model.videoName).font(.caption).lineLimit(2) }
           Text(text("Use a short local video. HEVC MP4/MOV is the SDK's documented test format. The iOS Simulator uses file replay, not an iPhone camera.",
@@ -159,6 +167,11 @@ struct MuseumPhoneView: View {
         }
         Button(text("Load offline layout example (not recognition)", "载入离线布局样例（非画面识别）")) { model.loadLayoutExample() }
           .disabled(!model.streaming || model.recognizing || model.changingInput)
+          .accessibilityIdentifier("load-layout")
+        if !model.streaming {
+          Text(text("Start the simulated preview to enable the layout example.", "先开始模拟预览，收到画面后即可载入样例。"))
+            .font(.caption).foregroundStyle(.secondary)
+        }
       }
     }.padding(16).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 16))
   }
@@ -167,20 +180,20 @@ struct MuseumPhoneView: View {
       HStack {
         Image(systemName: narration.playing ? "waveform" : "speaker.wave.2")
         Text(narration.finished ? text("Tour complete", "导览完成") : narration.sectionTitle).font(.subheadline.weight(.semibold))
-        Spacer(); Text(narration.rateLabel).monospacedDigit()
+        Spacer(); Text(narration.rateLabel).monospacedDigit().accessibilityIdentifier("speech-rate-value")
       }.foregroundStyle(gold)
       if !narration.sentence.isEmpty { Text(narration.sentence).font(.body).fixedSize(horizontal: false, vertical: true) }
       HStack {
         Button { narration.toggle() } label: {
           Label(text(narration.playing ? "Pause" : "Play", narration.playing ? "暂停" : "播放"), systemImage: narration.playing ? "pause.fill" : "play.fill")
-        }
+        }.accessibilityIdentifier("toggle-playback")
         Spacer()
         Button(text("Next detail →", "下一个细节 →")) { narration.next() }
       }.buttonStyle(.bordered)
       Picker(text("Speech rate", "朗读语速"), selection: Binding(get: { narration.rate }, set: { narration.setRate($0) })) {
         ForEach(TourNarrator.rates, id: \.self) { rate in Text(TourNarrator.label(for: rate)).tag(rate) }
-      }.pickerStyle(.menu)
-      Toggle(text("Show captions on glasses", "在眼镜上显示字幕"), isOn: $narration.subtitles).font(.subheadline)
+      }.pickerStyle(.menu).accessibilityIdentifier("speech-rate")
+      Toggle(text("Show captions on glasses", "在眼镜上显示字幕"), isOn: $narration.subtitles).font(.subheadline).accessibilityIdentifier("captions")
       HStack {
         Image(systemName: "hifispeaker")
         Text(text("Audio: ", "音频输出：") + narration.audioOutput)
@@ -190,6 +203,9 @@ struct MuseumPhoneView: View {
         .font(.caption).foregroundStyle(.secondary)
     }.padding(18).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
       .overlay(RoundedRectangle(cornerRadius: 18).stroke(gold.opacity(0.24)))
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("narration")
+      .accessibilityValue("selected=\(narration.selectedNumber.map(String.init) ?? "intro"); playing=\(narration.playing); rate=\(narration.rateLabel)")
   }
   private func pointsCard(_ guide: MuseumGuide) -> some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -204,6 +220,7 @@ struct MuseumPhoneView: View {
             if narration.selectedNumber == point.number { Image(systemName: "waveform") }
           }.padding(.vertical, 10)
         }
+        .accessibilityIdentifier("point-\(point.number)")
       }
     }.buttonStyle(.plain)
   }

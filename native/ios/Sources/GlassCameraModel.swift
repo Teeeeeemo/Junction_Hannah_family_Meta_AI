@@ -168,15 +168,19 @@ final class GlassCameraModel: ObservableObject {
       guard run == generation else { return }
       attemptedAutomaticScan = false; frameCount = 0; guide = nil; error = ""
       let connected = try wearables.createSession(deviceSelector: selected); session = connected; sessionActive = true
+      // Install the SDK listeners before start(). The mock session can reach
+      // .started synchronously, before a newly created Task starts executing.
+      let states = connected.stateStream()
+      let errors = connected.errorStream()
       sessionTask = Task { [weak self] in
-        for await state in connected.stateStream() {
+        for await state in states {
           guard !Task.isCancelled, let self, run == self.generation else { return }
           if state == .started && self.camera == nil { self.attachCamera(to: connected, run: run) }
           if state == .stopped { self.stop(); return }
         }
       }
       errorTask = Task { [weak self] in
-        for await error in connected.errorStream() {
+        for await error in errors {
           guard !Task.isCancelled, let self, run == self.generation else { return }
           self.error = error.localizedDescription; self.stop()
         }
@@ -205,7 +209,9 @@ final class GlassCameraModel: ObservableObject {
       }.store(in: tokens)
       camera.stream.statePublisher.listen { [weak self] state in
         let active = state == .streaming
-        Task { @MainActor [weak self] in guard let self, run == self.generation else { return }; self.streaming = active }
+        // A stream-state event alone does not prove usable frames arrived.
+        // Only receive() enables frame-dependent controls.
+        Task { @MainActor [weak self] in guard let self, run == self.generation else { return }; if !active { self.streaming = false } }
       }.store(in: tokens)
       do { try output.attach(to: connected) } catch { self.error = "Display: " + error.localizedDescription }
       camera.stream.start(); status = inputMode.isMock ? "Waiting for simulated camera frames…" : "Waiting for glasses camera frames…"

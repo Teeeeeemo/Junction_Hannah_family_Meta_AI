@@ -4,11 +4,11 @@
  classes = {};
  objectVersion = 77;
  objects = {
-  000000000000000000000001 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 2640; TargetAttributes = {000000000000000000000002 = {ProvisioningStyle = Automatic; }; }; }; buildConfigurationList = 000000000000000000000010; compatibilityVersion = "Xcode 16.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = 000000000000000000000003; productRefGroup = 000000000000000000000005; projectDirPath = ""; projectRoot = ""; packageReferences = (000000000000000000000020); targets = (000000000000000000000002); };
+  000000000000000000000001 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 2640; TargetAttributes = {000000000000000000000002 = {ProvisioningStyle = Automatic; }; }; }; buildConfigurationList = 000000000000000000000010; compatibilityVersion = "Xcode 16.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = 000000000000000000000003; productRefGroup = 000000000000000000000005; projectDirPath = ""; projectRoot = ""; packageReferences = (000000000000000000000020); targets = (000000000000000000000002,000000000000000000000040); };
   000000000000000000000002 = {isa = PBXNativeTarget; buildConfigurationList = 000000000000000000000011; buildPhases = (000000000000000000000007,000000000000000000000008,000000000000000000000009); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (000000000000000000000004); name = MuseumCompanion; packageProductDependencies = (000000000000000000000021,000000000000000000000022,000000000000000000000023,000000000000000000000027); productName = MuseumCompanion; productReference = 000000000000000000000006; productType = "com.apple.product-type.application"; };
-  000000000000000000000003 = {isa = PBXGroup; children = (000000000000000000000004,000000000000000000000005); sourceTree = "<group>"; };
+  000000000000000000000003 = {isa = PBXGroup; children = (000000000000000000000004,000000000000000000000041,000000000000000000000005); sourceTree = "<group>"; };
   000000000000000000000004 = {isa = PBXFileSystemSynchronizedRootGroup; path = Sources; sourceTree = "<group>"; };
-  000000000000000000000005 = {isa = PBXGroup; children = (000000000000000000000006); name = Products; sourceTree = "<group>"; };
+  000000000000000000000005 = {isa = PBXGroup; children = (000000000000000000000006,000000000000000000000042); name = Products; sourceTree = "<group>"; };
   000000000000000000000006 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MuseumCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
   000000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
   000000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (000000000000000000000024,000000000000000000000025,000000000000000000000026,000000000000000000000028); runOnlyForDeploymentPostprocessing = 0; };
@@ -28,6 +28,17 @@
   000000000000000000000026 = {isa = PBXBuildFile; productRef = 000000000000000000000023; };
   000000000000000000000027 = {isa = XCSwiftPackageProductDependency; package = 000000000000000000000020; productName = MWDATMockDevice; };
   000000000000000000000028 = {isa = PBXBuildFile; productRef = 000000000000000000000027; };
+  000000000000000000000040 = {isa = PBXNativeTarget; buildConfigurationList = 000000000000000000000046; buildPhases = (000000000000000000000043,000000000000000000000044,000000000000000000000045); buildRules = (); dependencies = (000000000000000000000050); fileSystemSynchronizedGroups = (000000000000000000000041); name = MuseumCompanionUITests; productName = MuseumCompanionUITests; productReference = 000000000000000000000042; productType = "com.apple.product-type.bundle.ui-testing"; };
+  000000000000000000000041 = {isa = PBXFileSystemSynchronizedRootGroup; path = UITests; sourceTree = "<group>"; };
+  000000000000000000000042 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MuseumCompanionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+  000000000000000000000043 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+  000000000000000000000044 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+  000000000000000000000045 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+  000000000000000000000046 = {isa = XCConfigurationList; buildConfigurations = (000000000000000000000047,000000000000000000000048); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+  000000000000000000000047 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.muse.museumcompanion.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = MuseumCompanion; SWIFT_VERSION = 6.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; }; name = Debug; };
+  000000000000000000000048 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.muse.museumcompanion.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = MuseumCompanion; SWIFT_VERSION = 6.0; }; name = Release; };
+  000000000000000000000049 = {isa = PBXContainerItemProxy; containerPortal = 000000000000000000000001; proxyType = 1; remoteGlobalIDString = 000000000000000000000002; remoteInfo = MuseumCompanion; };
+  000000000000000000000050 = {isa = PBXTargetDependency; target = 000000000000000000000002; targetProxy = 000000000000000000000049; };
  };
  rootObject = 000000000000000000000001;
 }

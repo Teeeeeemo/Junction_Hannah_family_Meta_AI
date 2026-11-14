@@ -1,6 +1,6 @@
 # Museum Companion：iOS DAT 相机接入工程
 
-状态（2026-11-14）：0.1.0 和 0.1.1 / build 2 均已远端构建，并通过 Sideloadly 安装到 iPhone 15 Pro / iOS 26.5.2，用户确认新版 MUSE 界面打开。当前源码为 **0.1.2 / build 3**，新增无眼镜调试，尚待完整 Xcode 构建和运行验收；目前没有已构建的 0.1.2 IPA。用户报告的 Gemini 语音缺失、无跟随框和杂物误讲仍未修复。
+状态（2026-11-14 晚）：0.1.2 / build 3（`c0154ac`）已发布并通过 Sideloadly 安装到指定 iPhone，用户确认新版打开。本次新增模拟器签名／会话启动修复与 XCUITest，实际视频出帧、离线样例和部分交互已运行；最新 UI suite 2 通过／3 失败。修复源码尚未打包或安装。详见[测试进度](../../docs/10-ios-simulator-test-progress.md)及[Mac mini 接力任务](../../docs/11-mac-mini-codex-handoff-prompt.md)。三个产品 BUG 仍未修复。
 
 ## 0.1.2：无眼镜调试
 
@@ -8,7 +8,7 @@
 - 手机内显示 SDK 原生 Display 预览，保留实际按钮回调；模拟入口和帧计数明确标记，不冒充实际眼镜。
 - 模拟预览不依赖实体眼镜、真实 Meta 注册或后端；云端识别需要连接后端。未连接后端时可主动载入明确标记的四点离线布局样例，声音仍为系统 TTS。
 - 手机相机需系统 Camera 权限；Simulator 采用文件回放。文件导入持有安全作用域，复制到 App 缓存并检查可播放轨道；切源／停止使旧帧和迟到分析失效。
-- 输入策略、导览与显示逻辑共 31 项本地检查通过；SDK Mock 的实际运行、视频编码兼容及原生预览交互尚未验证。
+- 输入策略、导览与显示逻辑共 31 项检查通过；SDK HEVC 回放、自动首点和部分交互已有实际运行证据；预览点击、菜单命中及其他编码仍待完成验证。
 
 操作与验收：[无眼镜调试手册](../../docs/09-no-glasses-debugging.md)。未完成项：[已知问题与剩余功能](../../docs/08-bugs-and-roadmap.md)。
 
@@ -31,7 +31,7 @@ bash run_ios.sh unsigned
 
 输出为 `build/ios/MuseumCompanion-unsigned.ipa`，下载回本机后用现有 Sideloadly 设置重签名安装。沿用同一 Apple ID 和原始 Bundle Identifier，核对工具实际生成的签名 Bundle ID 是否与旧安装一致。`museumcompanion://` 和 `MWDAT.AppLinkURLScheme` 保持原值；免费签名有效期以新描述文件为准。请勿把源码下载 ZIP 当作 IPA。
 
-`run_ios.sh` 来自已发布预览版的成功构建源码附件；0.1.1 已用此流程构建。当前 0.1.2 仍须在远端实际构建；脚本支持 `IOS_BUILD_DIR` 自定义输出目录。
+`run_ios.sh` 来自已发布预览版的成功构建源码附件；0.1.1 已用此流程构建。0.1.2 已实际构建；当前修复如需安装，须重新生成 IPA。脚本支持 `IOS_BUILD_DIR` 自定义输出目录。
 
 本地已通过 17 项纯 Swift 导览／显示逻辑检查（中英分句、总览自动推进、手动改选、结束与重播、三点分页、Unicode 截断与默认隐藏字幕）、全部 Swift 源码语法检查、工程属性列表检查及构建脚本语法检查。这些检查不包含实际发声、iOS SDK 类型检查或镜片视觉验收。
 
@@ -80,10 +80,12 @@ plutil -lint native/ios/Info.plist native/ios/MuseumCompanion.xcodeproj/project.
 swiftc -frontend -parse native/ios/Sources/*.swift
 ```
 
-0.1.0／0.1.1 的构建与真机反馈已单独记录；0.1.2 的本地检查不解析完整 iOS SDK。当前版本在 Mac mini 上仍需完成 SDK 类型检查、链接和运行验收：
+0.1.2 已构建并安装，当前修复也已通过实际 Debug／UI test target 编译。可在 Mac mini 执行以下构建检查：
 
 ```bash
 xcodebuild -project native/ios/MuseumCompanion.xcodeproj -scheme MuseumCompanion -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 ```
 
 请以新版构建日志、安装版本号和实际佩戴结果补充验收，尤其验证：默认视野无长段文字；听到总览后自动进入 1 号点；点选 3 号立即切换语音；暂停／继续；开关字幕；三点分页；眼镜音频路由；停止／重扫时无旧语音。
+
+可重复 UI 回归：`bash scripts/test-ios-ui.sh`。测试脚本保留当前失败，结果说明见 docs/10；当前只把实际运行到且通过的断言计入进度。

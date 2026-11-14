@@ -2,7 +2,7 @@
 
 更新：2026-11-14（Europe/Helsinki）。适用源码版本：0.1.2 / build 3。
 
-当前状态：已接入三种输入来源、原生 DAT Display 模拟预览和离线布局样例；本地 31 项纯 Swift 检查、Swift 语法与工程配置检查通过。完整 Xcode 构建、SDK Mock 运行与 iPhone／Simulator 操作仍待执行。本文件不是已完成运行验收的证明，当前没有新生成的 0.1.2 IPA。
+当前状态：0.1.2 / build 3 已发布并安装；本次又补充模拟器签名／会话启动修复和 XCUITest，实际视频出帧、离线样例、自动首点及手机选点已运行。最新 UI suite 2 通过／3 失败；此次修复尚无新 IPA，详见[实际测试进度](10-ios-simulator-test-progress.md)。以下操作说明不代表所有步骤已验收。
 
 ## 1. 能做什么
 
@@ -33,7 +33,7 @@ bash run_ios.sh unsigned 2>&1 | tee /tmp/museum-ios-no-glasses-build.log
 
 工程新增 `MWDATMockDevice`，与其他 DAT 模块一样固定在 1.0.1。无需把 Gemini Key 复制到远端或 iPhone；测试后端仍在原 Mac，连接方式不变。
 
-本机只有 Command Line Tools；这里的语法检查和纯 Swift 测试不能代替上述 Xcode 编译。出现编译错误时保留完整日志，以第一处 error 为起点修复。
+用户本地旧 Mac 只有 Command Line Tools；完整编译已在 Mac mini 实际执行。语法检查和纯 Swift 测试不能代替 Xcode 编译及运行。出现编译错误时保留完整日志，以第一处 error 为起点修复。
 
 ## 3. iPhone：手机相机模式
 
@@ -69,7 +69,7 @@ bash run_ios.sh simulator
 - 未设置偏好时，iOS Simulator 默认使用视频回放。
 - Simulator 没有这台实体 iPhone 的后置相机；选择手机相机时会提示改用录像。
 - 当前集成的是 App 内原生 Display 预览，不包含启动 Chrome 预览服务器。原 Web／Chrome Simulator 保留独立使用。
-- 旧版 Simulator 曾出现 `Wearables.configure()` 的 `Internal error`。当前继续保留初始化失败保护；若新版本仍出现此错误，需要记录日志并修正 SDK 配置。不能把此时按钮不可用当作已有相机帧，也不能宣称模拟运行已通过。可优先在已验证 SDK 能初始化的 iPhone 上使用无眼镜模式。
+- 本次复现并修复 `Wearables.configure()` 的 `Internal error`：模拟器 App 使用本地 ad hoc 签名，不再关闭签名。还修复了同步启动时错过 session started 的竞态。现有初始化失败保护保留；其他环境若仍报错需单独记录，不能伪造帧。
 
 ## 6. 回到真实眼镜
 
@@ -79,7 +79,7 @@ bash run_ios.sh simulator
 
 ## 7. 本版本运行验收清单
 
-以下运行项目均待执行；请逐项记录设备、版本、结果和错误，不预先打勾。
+下表保留完整验收要求。最近实际结果和未到达的断言见[测试进度](10-ios-simulator-test-progress.md)，不要因某一流程前半段通过而整项打勾。
 
 | 用例 | 操作 | 通过标准 |
 |---|---|---|
@@ -101,3 +101,7 @@ bash run_ios.sh simulator
 光学可读性、现实空间对齐、实际眼镜音频／麦克风和端到端延迟仍需实体设备。还眼镜前建议保存同一作品的正面、移动、远近变化视频，以及眼镜实际显示录像与设备版本记录。
 
 参考：[Meta DisplayAccess 官方预览说明](https://github.com/meta/meta-wearables-dat-ios/tree/main/samples/DisplayAccess#readme)、[DAT 1.0.1 MockDevice 公共接口](https://github.com/meta/meta-wearables-dat-ios/blob/1.0.1/MWDATMockDevice.xcframework/ios-arm64/MWDATMockDevice.framework/Modules/MWDATMockDevice.swiftmodule/arm64-apple-ios.swiftinterface)。
+
+## 9. 可重复的 UI 自动测试
+
+在有完整 Xcode 的 Mac mini 执行 `bash scripts/test-ios-ui.sh`。脚本创建自己的 iPhone 15 Pro 模拟器，导入生成的 HEVC 移动图案，经真实 DAT Mock 相机／Display 运行，并保存 xcresult、截图和操作树。结束时清理自己的模拟器。它不调用 Gemini，也不验证现实对齐。当前 suite 保留三个失败供继续定位，不能宣称全绿。
