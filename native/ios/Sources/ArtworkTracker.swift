@@ -15,10 +15,14 @@ struct TrackingSnapshot: Sendable {
 
 /// A short delivery gap hides stale geometry while preserving the tracker.
 /// Longer gaps require identifying the work again before resuming its details.
+/// Glasses frames arrive over Bluetooth/Wi-Fi and stall for one to a few
+/// seconds in practice; the local Vision worker re-acquires those, so only a
+/// gap beyond `rescanAfter` falls back to a cloud re-identification.
 enum TrackingFreshnessPolicy {
   enum Action { case fresh, hide, rescan }
+  static let rescanAfter: TimeInterval = 4
   static func evaluate(frameAge: TimeInterval, resultAge: TimeInterval) -> Action {
-    if frameAge > 1 { return .rescan }
+    if frameAge > rescanAfter { return .rescan }
     if frameAge > 0.3 || resultAge > 0.3 { return .hide }
     return .fresh
   }

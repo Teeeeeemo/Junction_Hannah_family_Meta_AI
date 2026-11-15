@@ -61,13 +61,29 @@ struct MuseumPhoneView: View {
           }.pickerStyle(.segmented).disabled(model.translating)
 
           if let image = model.preview {
-            Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 220)
+            Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 440)
               .overlay {
                 GeometryReader { geometry in
-                  if let box = model.trackedDetailBox, box.count == 4 {
-                    Rectangle().stroke(gold, lineWidth: 2)
+                  // Whole artwork: thin dashed outline whenever Vision tracks it.
+                  if model.trackingStatus == "tracking", let box = model.trackedArtworkBox, box.count == 4 {
+                    Rectangle().stroke(.white.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                       .frame(width: box[2] * geometry.size.width, height: box[3] * geometry.size.height)
                       .position(x: (box[0] + box[2] / 2) * geometry.size.width, y: (box[1] + box[3] / 2) * geometry.size.height)
+                      .accessibilityIdentifier("tracked-artwork-box")
+                  }
+                  // Current detail: bold gold box with its point number.
+                  if let box = model.trackedDetailBox, box.count == 4 {
+                    Rectangle().stroke(gold, lineWidth: 4)
+                      .frame(width: box[2] * geometry.size.width, height: box[3] * geometry.size.height)
+                      .overlay(alignment: .topLeading) {
+                        if let number = narration.selectedNumber {
+                          Text("\(number)").font(.caption.bold()).foregroundStyle(.black)
+                            .padding(.horizontal, 6).padding(.vertical, 2).background(gold)
+                            .offset(y: -20)
+                        }
+                      }
+                      .position(x: (box[0] + box[2] / 2) * geometry.size.width, y: (box[1] + box[3] / 2) * geometry.size.height)
+                      .accessibilityIdentifier("tracked-detail-box")
                   }
                 }
               }

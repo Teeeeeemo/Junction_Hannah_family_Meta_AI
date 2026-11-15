@@ -23,7 +23,12 @@ final class GlassCameraModel: ObservableObject {
   @Published var language = "en"
   @Published private(set) var artworkSearch: MuseumArtworkSearch?
   @Published private(set) var trackingStatus = "idle"
-  @Published private(set) var trackedDetailBox: [Double]?
+  @Published private(set) var trackedDetailBox: [Double]? {
+    didSet { if trackedDetailBox == nil && trackingStatus != "tracking" { trackedArtworkBox = nil } }
+  }
+  /// Whole-artwork outline from the same fresh Vision result; drawn on the
+  /// phone preview so the visitor sees tracking even during the overview.
+  @Published private(set) var trackedArtworkBox: [Double]?
   @Published private(set) var zoomImage: UIImage?
   @Published private(set) var zoom = 1
   @Published private(set) var translating = false
@@ -314,7 +319,8 @@ final class GlassCameraModel: ObservableObject {
         guide?.mode == "gemini", narration.selectedNumber == 1, narration.playing, !narration.awaitingContinue {
         if testPointAudioBaseline == nil { testPointAudioBaseline = narration.livePlayedFrames }
         if narration.livePlayedFrames > (testPointAudioBaseline ?? .max) {
-          testInputStallUntil = Date().addingTimeInterval(1.4)
+          // Longer than the rescan threshold so the test still exercises cloud re-identification.
+          testInputStallUntil = Date().addingTimeInterval(TrackingFreshnessPolicy.rescanAfter + 0.4)
           print("MUSE_TEST_INPUT_STALL_BEGIN point=1")
         }
       }
@@ -596,6 +602,7 @@ final class GlassCameraModel: ObservableObject {
         self.recoveryCount += 1
       }
       self.trackedDetailBox = result.detailBox
+      self.trackedArtworkBox = result.status == "tracking" ? result.artworkBox : nil
       self.lastTrackedImage = image
       self.lastTrackingAt = Date()
       self.narration.setLocated(located)
