@@ -117,13 +117,7 @@ struct MuseumPhoneView: View {
                   .disabled(value > 1 && model.trackedDetailBox == nil)
               }
             }
-            DisclosureGroup(isExpanded: $model.showingSources) {
-              if guide.sources.isEmpty { Text(text("No verified historical sources for this artwork. Descriptions are visual observations.", "该作品暂无可核验的历史资料，当前内容仅作视觉观察。")) }
-              ForEach(guide.sources) { source in
-                if let url = URL(string: source.url), url.scheme == "https" { Link(source.title, destination: url) }
-              }
-              Text(text("These are references for the guide, not the object's ownership history.", "这里展示讲解参考资料，不代表藏品流传记录。"))
-            } label: { Text(text("Guide sources", "讲解依据")) }
+            sourcesCard
             DisclosureGroup(text("Read the full guide", "展开完整讲解")) {
               VStack(alignment: .leading, spacing: 12) {
                 Text(guide.overview)
@@ -211,6 +205,44 @@ struct MuseumPhoneView: View {
   }
   private var narrationCard: some View {
     NativeNarrationCard(narration: narration, language: model.language).equatable()
+  }
+  private var sourcesCard: some View {
+    let references = model.currentSourceReferences
+    return DisclosureGroup(isExpanded: Binding(get: { model.showingSources }, set: { model.setSourcesVisible($0) })) {
+      VStack(alignment: .leading, spacing: 12) {
+        Text(references.subjectTitle).font(.headline).accessibilityIdentifier("sources-subject")
+        if let notice = references.notice(language: model.language) {
+          Text(notice).accessibilityIdentifier("sources-notice")
+        }
+        if references.sources.indices.contains(model.sourcePage) {
+          let source = references.sources[model.sourcePage]
+          if let url = URL(string: source.url) {
+            Link(source.title, destination: url).accessibilityIdentifier("source-reference-link")
+            Text(source.url).font(.caption).textSelection(.enabled)
+            Text(text("Opening the full reference leaves this app and ends the current guide.",
+              "打开完整资料会离开本应用，并结束当前导览。"))
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          if references.sources.count > 1 {
+            HStack {
+              if model.sourcePage > 0 {
+                Button(text("Previous", "上一条")) { model.turnSourcePage(-1) }.accessibilityIdentifier("source-previous")
+              }
+              Text("\(model.sourcePage + 1) / \(references.sources.count)").font(.caption)
+              if model.sourcePage + 1 < references.sources.count {
+                Button(text("Next reference", "下一条")) { model.turnSourcePage(1) }.accessibilityIdentifier("source-next")
+              }
+            }
+          }
+        }
+        Text(text("Associated references, not claim-by-claim verification or the object's ownership history.",
+          "关联参考资料不代表已逐句核验，也不是藏品流传记录。"))
+          .font(.caption).foregroundStyle(.secondary)
+        Button(text("Back to guide", "返回导览")) { model.setSourcesVisible(false) }
+          .accessibilityIdentifier("sources-back")
+      }.padding(.top, 8)
+    } label: { Text(references.heading(language: model.language)) }
+      .accessibilityIdentifier("current-sources-toggle")
   }
   private func pointsCard(_ guide: MuseumGuide) -> some View {
     VStack(alignment: .leading, spacing: 8) {

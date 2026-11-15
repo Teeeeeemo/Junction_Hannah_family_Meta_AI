@@ -30,6 +30,24 @@ function setup() {
 const emit = (connection: any, serverContent: any) => connection.callbacks.onmessage({ serverContent });
 
 describe('Live interruption recovery', () => {
+  it('silently updates language while retaining the selected detail in upstream context', async () => {
+    const { socket, connections, context } = setup();
+    await vi.waitFor(() => expect(socket.sent.some(event => event.type === 'ready')).toBe(true));
+    const session = connections[0].session;
+    session.sendClientContent.mockClear();
+    const before = socket.sent.length;
+    socket.receive({ type: 'context', context, language: 'zh', currentDetailId: context.details[1].id });
+    const updates = session.sendClientContent.mock.calls.map((call: any[]) => call[0]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].turnComplete).toBe(false);
+    expect(updates[0].turns[0].parts[0].text).toContain('Respond in Simplified Chinese');
+    expect(updates[0].turns[0].parts[0].text).toContain(`Current point ID: ${context.details[1].id}.`);
+    expect(socket.sent).toHaveLength(before);
+    expect(session.close).not.toHaveBeenCalled();
+    socket.receive({ type: 'context', context, language: 'en', currentDetailId: context.details[1].id });
+    expect(session.sendClientContent.mock.lastCall[0].turns[0].parts[0].text).toContain('Respond in English');
+    expect(session.sendClientContent.mock.lastCall[0].turns[0].parts[0].text).toContain(`Current point ID: ${context.details[1].id}.`);
+  });
   it('does not forward internal thought parts as visitor captions', async () => {
     const { socket, connections } = setup();
     await vi.waitFor(() => expect(socket.sent.some(event => event.type === 'ready')).toBe(true));

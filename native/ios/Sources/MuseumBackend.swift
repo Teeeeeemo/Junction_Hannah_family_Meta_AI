@@ -5,6 +5,68 @@ struct MuseumSource: Codable, Identifiable, Sendable {
   let title: String
   let url: String
 }
+
+/// References are existing backend records, never evidence of claim-by-claim verification.
+struct MuseumSourceReferences: Sendable {
+  enum Scope: Sendable { case none, artwork, detail }
+  enum Status: Sendable { case noGuide, noDetail, empty, available, partial, unavailable }
+  let scope: Scope
+  let status: Status
+  let number: Int?
+  let subjectTitle: String
+  let sources: [MuseumSource]
+  let missingSourceIDs: [String]
+  static func resolve(guide: MuseumGuide?, number: Int?) -> MuseumSourceReferences {
+    guard let guide else {
+      return MuseumSourceReferences(scope: .none, status: .noGuide, number: nil, subjectTitle: "", sources: [], missingSourceIDs: [])
+    }
+    let scope: Scope = number == nil ? .artwork : .detail
+    let title: String
+    let requested: [String]
+    if let number {
+      guard let detail = guide.details.first(where: { $0.number == number }) else {
+        return MuseumSourceReferences(scope: .detail, status: .noDetail, number: number, subjectTitle: "", sources: [], missingSourceIDs: [])
+      }
+      title = detail.title; requested = detail.sourceIds
+    } else { title = guide.artwork.title; requested = guide.sources.map(\.id) }
+    var seen = Set<String>()
+    let ids = requested.filter { seen.insert($0).inserted }
+    let records = Dictionary(grouping: guide.sources, by: \.id)
+    var resolved: [MuseumSource] = [], missing: [String] = []
+    for id in ids {
+      // The backend owns the source whitelist. Only referenced existing records
+      // can be displayed; never construct a citation from model labels or IDs.
+      guard let matches = records[id], matches.count == 1, let source = matches.first,
+        !source.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        let url = URL(string: source.url), url.scheme == "https", url.host != nil else {
+        missing.append(id); continue
+      }
+      resolved.append(source)
+    }
+    let status: Status = ids.isEmpty ? .empty : missing.isEmpty ? .available : resolved.isEmpty ? .unavailable : .partial
+    return MuseumSourceReferences(scope: scope, status: status, number: number, subjectTitle: title,
+      sources: resolved, missingSourceIDs: missing)
+  }
+  func heading(language: String) -> String {
+    let zh = language == "zh"
+    if scope == .artwork { return zh ? "作品参考资料" : "Artwork references" }
+    if let number { return zh ? "第\(number)点 · 关联参考资料" : "Point \(number) · Associated references" }
+    return zh ? "关联参考资料" : "Associated references"
+  }
+  func notice(language: String) -> String? {
+    let zh = language == "zh"
+    switch status {
+    case .noGuide: return zh ? "开始导览后可查看参考资料。" : "Start a guide to view references."
+    case .noDetail: return zh ? "当前细节已不可用。" : "This detail is no longer available."
+    case .empty:
+      return scope == .artwork ? (zh ? "该作品暂无已登记的参考资料。" : "No reference records are registered for this artwork.")
+        : (zh ? "本细节未关联参考资料。" : "No reference records are linked to this detail.")
+    case .partial: return zh ? "部分关联资料记录缺失。" : "Some linked reference records are missing."
+    case .unavailable: return zh ? "关联资料记录暂不可用。" : "The linked reference records are unavailable."
+    case .available: return nil
+    }
+  }
+}
 struct MuseumArtworkCandidate: Codable, Identifiable, Sendable {
   let id: String
   let identityKey: String

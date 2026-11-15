@@ -27,7 +27,8 @@ final class GlassCameraModel: ObservableObject {
   @Published private(set) var zoomImage: UIImage?
   @Published private(set) var zoom = 1
   @Published private(set) var translating = false
-  @Published var showingSources = false
+  @Published private(set) var showingSources = false
+  @Published private(set) var sourcePage = 0
   @Published var referenceArtworkID = ""
   @Published private(set) var inputMode: DebugInputMode
   @Published private(set) var changingInput = false
@@ -79,19 +80,22 @@ final class GlassCameraModel: ObservableObject {
     output.onTogglePlayback = { [weak self] in self?.narration.toggle() }
     output.onNext = { [weak self] in self?.narration.next() }
     output.onCycleRate = { [weak self] in self?.narration.cycleRate() }
+    output.onSourcesVisibility = { [weak self] in self?.setSourcesVisible($0) }
+    output.onSourcePage = { [weak self] in self?.turnSourcePage($0) }
     narration.onSnapshot = { [weak self] value in
       guard let self else { return }
       if value.selectedNumber != self.lastSelection {
         self.selectionVersion += 1; self.lastSelection = value.selectedNumber
+        self.sourcePage = 0
         self.trackedDetailBox = nil; self.zoomImage = nil; self.output.showInspection(nil)
       }
-      self.output.show(value)
+      self.publishDisplay(value)
     }
     narration.onError = { [weak self] in self?.error = $0 }
     narration.onLanguage = { [weak self] value in Task { await self?.changeLanguage(value) } }
     narration.onCommand = { [weak self] action, value in
       if action == "zoom", let value { self?.setZoom(Int(value)) }
-      if action == "sources" { self?.showingSources = true }
+      if action == "sources" { self?.setSourcesVisible(true) }
     }
     guard configurationError == nil else {
       error = configurationError ?? "Meta DAT configuration failed."
@@ -115,6 +119,27 @@ final class GlassCameraModel: ObservableObject {
     }
   }
   var videoReady: Bool { videoURL != nil }
+  var currentSourceReferences: MuseumSourceReferences {
+    MuseumSourceReferences.resolve(guide: guide, number: narration.selectedNumber)
+  }
+  func setSourcesVisible(_ visible: Bool) {
+    guard visible != showingSources else { return }
+    showingSources = visible
+    if visible { sourcePage = 0 }
+    publishDisplay(narration.snapshot)
+  }
+  func turnSourcePage(_ delta: Int) {
+    let next = sourcePage + delta
+    guard showingSources, currentSourceReferences.sources.indices.contains(next) else { return }
+    sourcePage = next; publishDisplay(narration.snapshot)
+  }
+  private func publishDisplay(_ value: TourSnapshot) {
+    var display = value
+    display.sourceReferences = MuseumSourceReferences.resolve(guide: guide, number: value.selectedNumber)
+    if !display.sourceReferences.sources.indices.contains(sourcePage) { sourcePage = 0 }
+    display.sourcesShown = showingSources; display.sourcePage = sourcePage
+    output.show(display)
+  }
   var canStart: Bool {
     !changingInput && !connecting && !sessionActive && DebugInputPolicy.canStart(mode: inputMode,
       sdkReady: sdkReady, backendReady: backendReady, registered: registered, videoReady: videoReady)
@@ -154,6 +179,7 @@ final class GlassCameraModel: ObservableObject {
   func loadLayoutExample() {
     guard inputMode.isMock, streaming, !recognizing else { return }
     attemptedAutomaticScan = true
+    showingSources = false; sourcePage = 0
     artworkVersion += 1; languageVersion += 1; translating = false
     trackingTask?.cancel(); trackingTask = nil; trackingEnabled = false
     trackedDetailBox = nil; zoomImage = nil; lastTrackedImage = nil; output.showInspection(nil)
@@ -294,6 +320,7 @@ final class GlassCameraModel: ObservableObject {
     let previous = artworkSearch
     let priorIdentity = guide?.recognition?.selectedCandidate?.identityKey
     let priorProgress = narration.progressSnapshot, priorPaused = narration.paused, priorAwaitingContinue = narration.awaitingContinue
+    showingSources = false; sourcePage = 0
     artworkVersion += 1; let context = artworkVersion
     languageVersion += 1; translating = false
     trackingTask?.cancel(); trackingTask = nil; lastTrackedImage = nil
@@ -408,6 +435,7 @@ final class GlassCameraModel: ObservableObject {
   }
   private func failure(_ text: String) -> NSError { NSError(domain: "MuseumGuide", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
   func stop() {
+    showingSources = false; sourcePage = 0
     videoImportID = UUID()
     languageVersion += 1; translating = false
     artworkVersion += 1; frameWatchdog?.cancel(); frameWatchdog = nil; lastTrackedImage = nil

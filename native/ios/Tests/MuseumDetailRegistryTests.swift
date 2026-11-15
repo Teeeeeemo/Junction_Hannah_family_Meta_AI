@@ -31,6 +31,46 @@ import Foundation
     _ = registry.reconcile(guide((1...8).map { "point-\($0)" }))
     let capped = registry.reconcile(guide(["point-9", "point-3"]))
     precondition(capped.details.count == 1 && capped.details[0].id == "point-3" && capped.details[0].number == 3, "Reserved numbers are bounded to valid Live command numbers without recycling absent identities")
-    print("Passed 9 native stable-detail registry checks. Identity key changes still require visual re-identification; absent points are not rendered.")
+    var sourceChecks = 0
+    func check(_ value: Bool, _ message: String) { precondition(value, message); sourceChecks += 1 }
+    let sourceA = MuseumSource(id: "catalog-a", title: "Registered museum record A", url: "https://museum.example/a")
+    let sourceB = MuseumSource(id: "catalog-b", title: "Registered museum record B", url: "https://museum.example/b")
+    func referencedGuide(_ ids: [String], sources: [MuseumSource] = []) -> MuseumGuide {
+      MuseumGuide(mode: "gemini", artwork: initial.artwork, overview: initial.overview,
+        details: [.init(id: "referenced-point", number: 2, title: "Current detail", description: "Visible marks.",
+          box: [0.1,0.2,0.3,0.4], sourceIds: ids)], sources: sources)
+    }
+    let sourceGuide = referencedGuide(["catalog-b", "catalog-a", "catalog-b"], sources: [sourceA, sourceB])
+    let references = MuseumSourceReferences.resolve(guide: sourceGuide, number: 2)
+    check(references.scope == .detail && references.status == .available, "A selected detail resolves its own associated references")
+    check(references.sources.map(\.id) == ["catalog-b", "catalog-a"], "References follow linked-ID order, deduplicate IDs, and never use the global list order")
+    check(references.number == 2 && references.subjectTitle == "Current detail", "The panel title and content identify the same current detail")
+    check(references.missingSourceIDs.isEmpty, "Every resolved ID has an existing reference record")
+    let overview = MuseumSourceReferences.resolve(guide: sourceGuide, number: nil)
+    check(overview.scope == .artwork && overview.sources.map(\.id) == ["catalog-a", "catalog-b"], "Overview shows explicitly scoped artwork references")
+    check(overview.heading(language: "en") == "Artwork references" && references.heading(language: "zh").contains("2"), "Overview and detail headings cannot imply the same scope")
+    let empty = MuseumSourceReferences.resolve(guide: referencedGuide([], sources: [sourceA]), number: 2)
+    check(empty.status == .empty && empty.sources.isEmpty, "An unreferenced detail must never fall back to artwork references")
+    check(empty.notice(language: "en") != nil, "An unreferenced detail has a clear in-place explanation")
+    let partial = MuseumSourceReferences.resolve(guide: referencedGuide(["catalog-a", "missing", "missing"], sources: [sourceA]), number: 2)
+    check(partial.status == .partial && partial.sources.map(\.id) == ["catalog-a"] && partial.missingSourceIDs == ["missing"], "Partly missing references remain explicit without inventing a URL")
+    let unavailable = MuseumSourceReferences.resolve(guide: referencedGuide(["missing"], sources: [sourceA]), number: 2)
+    check(unavailable.status == .unavailable && unavailable.sources.isEmpty, "Unknown linked IDs cannot expose unrelated artwork references")
+    let invalidURL = MuseumSource(id: "catalog-a", title: sourceA.title, url: "http://museum.example/a")
+    let invalid = MuseumSourceReferences.resolve(guide: referencedGuide([sourceA.id], sources: [invalidURL]), number: 2)
+    check(invalid.status == .unavailable && invalid.sources.isEmpty, "Only existing HTTPS records are eligible; no URL is generated")
+    let ambiguous = MuseumSourceReferences.resolve(guide: referencedGuide([sourceA.id], sources: [sourceA, sourceA]), number: 2)
+    check(ambiguous.status == .unavailable, "Duplicate reference records are ambiguous rather than silently chosen")
+    let noDetail = MuseumSourceReferences.resolve(guide: sourceGuide, number: 99)
+    check(noDetail.status == .noDetail && noDetail.sources.isEmpty, "An unknown selected point cannot inherit another point's references")
+    let noGuide = MuseumSourceReferences.resolve(guide: nil, number: 2)
+    check(noGuide.status == .noGuide && noGuide.sources.isEmpty, "A stopped visit exposes no prior reference records")
+    let switched = MuseumSourceReferences.resolve(guide: referencedGuide([sourceA.id], sources: [sourceA]), number: 2)
+    check(switched.subjectTitle == references.subjectTitle && switched.sources.map(\.id) == [sourceA.id], "Each publication derives references from the current guide, not a retained panel cache")
+    let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+    let before = try! encoder.encode(sourceGuide)
+    _ = MuseumSourceReferences.resolve(guide: sourceGuide, number: 2)
+    check(try! encoder.encode(sourceGuide) == before, "Opening references cannot change guide text, geometry, IDs or numbering")
+    print("Passed 9 native stable-detail registry checks and \(sourceChecks) current-reference checks.")
   }
 }

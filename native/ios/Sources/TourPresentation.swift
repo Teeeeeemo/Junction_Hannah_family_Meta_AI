@@ -72,6 +72,9 @@ struct TourSnapshot: Sendable {
   var subtitles = false
   var rateLabel = "1×"
   var language = "en"
+  var sourceReferences = MuseumSourceReferences.resolve(guide: nil, number: nil)
+  var sourcesShown = false
+  var sourcePage = 0
 }
 
 enum HUDLayout {

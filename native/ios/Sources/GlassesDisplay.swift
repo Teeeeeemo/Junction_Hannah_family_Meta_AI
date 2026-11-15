@@ -21,6 +21,8 @@ final class GlassesDisplay {
   var onTogglePlayback: (() -> Void)?
   var onNext: (() -> Void)?
   var onCycleRate: (() -> Void)?
+  var onSourcesVisibility: ((Bool) -> Void)?
+  var onSourcePage: ((Int) -> Void)?
 
   func attach(to session: DeviceSession) throws {
     let run = epoch.begin()
@@ -83,7 +85,9 @@ final class GlassesDisplay {
           Text(HUDLayout.compact(value.sentence, latin: 88, cjk: 32), style: .meta)
         }
       }.flexGrow(inspectionImage == nil ? 7 : 1)
-      if !value.points.isEmpty {
+      if value.sourcesShown {
+        sourcesView(run: run).flexGrow(inspectionImage == nil ? 3 : 1)
+      } else if !value.points.isEmpty {
         FlexBox(direction: .column, spacing: 6) {
           if let inspectionImage {
             MWDATDisplay.Image(image: inspectionImage, sizePreset: .fill).flexGrow(1)
@@ -119,8 +123,44 @@ final class GlassesDisplay {
             Button(label: zh ? "总览" : "Intro", style: .secondary,
               onClick: { [weak self] in self?.dispatch(run: run) { $0.onSelect?(nil) } })
           }
+          ButtonGroup {
+            Button(label: zh ? "参考资料" : "References", style: .secondary,
+              onClick: { [weak self] in self?.dispatch(run: run) { $0.onSourcesVisibility?(true) } })
+          }
         }.flexGrow(inspectionImage == nil ? 3 : 1)
       }
     }.padding(12).background(.none)
+  }
+  private func sourcesView(run: SessionEpoch.Token) -> FlexBox {
+    let value = snapshot, references = value.sourceReferences, zh = value.language == "zh"
+    return FlexBox(direction: .column, spacing: 8) {
+      Text(references.heading(language: value.language), style: .meta, color: .secondary)
+      Text(HUDLayout.compact(references.subjectTitle, latin: 38, cjk: 16), style: .meta)
+      if let notice = references.notice(language: value.language) {
+        Text(HUDLayout.compact(notice, latin: 88, cjk: 32), style: .meta)
+      }
+      if references.sources.indices.contains(value.sourcePage) {
+        let source = references.sources[value.sourcePage]
+        Text(HUDLayout.compact(source.title, latin: 64, cjk: 28), style: .meta)
+        Text(URL(string: source.url)?.host ?? "", style: .meta, color: .secondary)
+        if references.sources.count > 1 {
+          Text("\(value.sourcePage + 1) / \(references.sources.count)", style: .meta, color: .secondary)
+          ButtonGroup {
+            if value.sourcePage > 0 {
+              Button(label: zh ? "上一条" : "Previous", style: .secondary,
+                onClick: { [weak self] in self?.dispatch(run: run) { $0.onSourcePage?(-1) } })
+            }
+            if value.sourcePage + 1 < references.sources.count {
+              Button(label: zh ? "下一条" : "Next reference", style: .secondary,
+                onClick: { [weak self] in self?.dispatch(run: run) { $0.onSourcePage?(1) } })
+            }
+          }
+        }
+      }
+      ButtonGroup {
+        Button(label: zh ? "返回导览" : "Back to guide", style: .secondary,
+          onClick: { [weak self] in self?.dispatch(run: run) { $0.onSourcesVisibility?(false) } })
+      }
+    }
   }
 }

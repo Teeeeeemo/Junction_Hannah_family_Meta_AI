@@ -112,7 +112,7 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     cancelUtterance(); self.guide = guide; self.language = language; artworkTitle = guide.artwork.title
     points = guide.details.sorted { $0.number < $1.number }.map { TourPoint(number: $0.number, title: $0.title) }
     progress.replace(stops: stops(guide, language: language))
-    live.setLanguage(language, guide: guide)
+    live.setLanguage(language, guide: guide, currentDetailID: guide.details.first { $0.number == selectedNumber }?.id)
     if wasPlaying && !awaitingContinue { speakCurrent() }
     else { sentence = progress.sentence; sectionTitle = progress.current?.title ?? sectionTitle; paused = wasPaused; publish() }
   }

@@ -146,9 +146,11 @@ import Combine
     rate = value; speed.rate = Float(value)
     if ready { send(["type": "playback_rate", "rate": value]) }
   }
-  func setLanguage(_ value: String, guide: MuseumGuide) {
+  func setLanguage(_ value: String, guide: MuseumGuide, currentDetailID: String?) {
     language = value; currentGuide = guide
-    if ready, let context = try? object(guide) { send(["type": "context", "context": context, "language": value]) }
+    if ready, let context = try? object(guide) {
+      send(["type": "context", "context": context, "language": value, "currentDetailId": currentDetailID ?? ""])
+    }
   }
   func startMicrophone() async {
     guard ready, !listening else { return }

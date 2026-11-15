@@ -1,5 +1,7 @@
 # Museum Companion — Meta Ray-Ban Display 博物馆导览
 
+> WIP 分支 `feat/museum-current-point-sources`：保存当前点关联资料、手机/镜片查看与返回、语言上下文保留当前点的草稿。仅完成纯逻辑及部分类型检查，尚未与 0.2.1 恢复/输入修改集成，也未通过完整 iOS UI/云端回归；无新 IPA，开发已暂停。
+
 项目状态：Web 原型 + 已安装 iOS 0.1.2；模拟器运行修复与 UI 回归已执行（2 通过／3 失败） · 2026-11-14（Europe/Helsinki）
 
 最新已完成、待验证、阻塞与待办见 **[项目进度与待办](docs/07-project-progress.md)**。本次实际运行结果见 **[iOS 模拟器测试进度](docs/10-ios-simulator-test-progress.md)**；交给 Mac mini Codex 的任务见 **[接力 Prompt](docs/11-mac-mini-codex-handoff-prompt.md)**。
