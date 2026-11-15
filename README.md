@@ -1,6 +1,6 @@
 # Museum Companion — Meta Ray-Ban Display 博物馆导览
 
-项目状态（2026-11-15 04:00，演示版）：iOS 0.2.2 / build 6 是当前演示构建（[源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.2-ios-preview.1)）。在 0.2.1 基础上加入演示连续性：追踪丢失只隐藏框、不打断讲解，并自动重新确认同一作品。模拟器离线 UI 10/11、原生云端主流程通过，该轮测试失败位于模拟预览恢复；后续用户另报告手机二维追踪框不可用，不能称只有一个已知问题；详见 [测试进度](docs/10-ios-simulator-test-progress.md)。0.2.2 已在手机安装并打开；二维追踪框按未完成／待修复记录，镜片现实框及光学标定未完成。
+项目状态（2026-11-15 05:10，演示版）：iOS 0.2.3 / build 7 是当前演示构建（[源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.3-ios-preview.1)）。在 0.2.2 讲解连续性基础上，针对用户实测“手机没有二维追踪框”加固 Vision 追踪：短暂低置信不再丢弃追踪器（连续约 0.8 秒才判失跟），置信门槛 0.65→0.5；并按 PRD v0.3 在概览结束／跳过前不在眼镜上展示细节列表。模拟器离线 UI 10/11、原生云端主流程通过，唯一失败仍是模拟预览恢复；**手机追踪框是否修复须真机确认**，镜片现实框及光学标定未完成。详见 [测试进度](docs/10-ios-simulator-test-progress.md)。
 
 最新已完成、待验证、阻塞与待办见 **[项目进度与待办](docs/07-project-progress.md)**。本次实际运行结果见 **[iOS 模拟器测试进度](docs/10-ios-simulator-test-progress.md)**；交给 Mac mini Codex 的任务见 **[接力 Prompt](docs/11-mac-mini-codex-handoff-prompt.md)**。
 

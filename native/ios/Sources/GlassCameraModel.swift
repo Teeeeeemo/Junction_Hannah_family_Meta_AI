@@ -584,6 +584,9 @@ final class GlassCameraModel: ObservableObject {
       guard version == self.selectionVersion else { return }
       let located = result.status == "tracking" && (self.narration.selectedNumber == nil || result.detailBox != nil)
       if self.recovery.phase == .awaitingTracking {
+        // A transient miss right after reseeding is not a failed recovery;
+        // the recovery task's own deadline bounds the wait.
+        if result.status == "reacquiring" { return }
         guard self.recovery.acceptTracking(frameToken: number, fresh: true, detailLocated: located) else {
           self.failRecovery("A reliable current detail location was not found. Tap Scan again.", run: run, context: context)
           return

@@ -16,6 +16,7 @@ final class GlassesDisplay {
   private var renderTask: Task<Void, Never>?
   private var epoch = SessionEpoch()
   private var inspectionImage: UIImage?
+  private var pointsRevealed = false
   #if DEBUG
   private(set) var debugSendCount = 0
   #endif
@@ -39,6 +40,10 @@ final class GlassesDisplay {
     capability.start()
   }
   func show(_ value: TourSnapshot) {
+    // PRD v0.3: details may be identified during the overview, but the list
+    // appears on the Display only once the overview ends or is skipped.
+    if value.artworkTitle != snapshot.artworkTitle { pointsRevealed = false }
+    if value.selectedNumber != nil { pointsRevealed = true }
     if value.selectedNumber != snapshot.selectedNumber || value.artworkTitle != snapshot.artworkTitle {
       page = HUDLayout.page(containing: value.selectedNumber, points: value.points)
     }
@@ -56,7 +61,7 @@ final class GlassesDisplay {
     #endif
     epoch.invalidate()
     ready = false; pending = false; renderTask?.cancel(); renderTask = nil
-    listeners.clear(); display?.stop(); display = nil; snapshot = TourSnapshot(); page = 0; inspectionImage = nil
+    listeners.clear(); display?.stop(); display = nil; snapshot = TourSnapshot(); page = 0; inspectionImage = nil; pointsRevealed = false
   }
   private func render() {
     pending = true
@@ -90,8 +95,8 @@ final class GlassesDisplay {
     }
   }
   private func view(run: SessionEpoch.Token) -> FlexBox {
-    let value = snapshot, zh = value.language == "zh"
-    let points = HUDLayout.points(on: page, from: value.points)
+    let value = snapshot, zh = value.language == "zh", revealed = pointsRevealed
+    let points = revealed ? HUDLayout.points(on: page, from: value.points) : []
     return FlexBox(direction: .row, spacing: 18, crossAlignment: .stretch) {
       FlexBox(direction: .column, spacing: 8) {
         Text("MUSE.  ·  \(value.rateLabel)", style: .meta, color: .secondary)
@@ -107,7 +112,7 @@ final class GlassesDisplay {
           if let inspectionImage {
             MWDATDisplay.Image(image: inspectionImage, sizePreset: .fill).flexGrow(1)
           }
-          Text(zh ? "细节探索" : "LOOK CLOSER", style: .meta, color: .secondary)
+          Text(revealed ? (zh ? "细节探索" : "LOOK CLOSER") : (zh ? "先认识这幅作品" : "THE WHOLE STORY"), style: .meta, color: .secondary)
           for point in points {
             ButtonGroup {
               Button(label: "\(point.number). \(HUDLayout.compact(point.title, latin: 16, cjk: 7))",
@@ -115,7 +120,7 @@ final class GlassesDisplay {
                 onClick: { [weak self] in self?.dispatch(run: run) { $0.onSelect?(point.number) } })
             }
           }
-          if value.points.count > HUDLayout.pointsPerPage {
+          if revealed && value.points.count > HUDLayout.pointsPerPage {
             ButtonGroup {
               Button(label: zh ? "更多细节 ›" : "More points ›", style: .secondary, onClick: { [weak self] in
                 self?.dispatch(run: run) { display in

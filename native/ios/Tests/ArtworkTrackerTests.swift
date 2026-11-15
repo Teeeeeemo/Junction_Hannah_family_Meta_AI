@@ -28,14 +28,24 @@ import CoreGraphics
     context.draw(reference, in: CGRect(x: -20, y: -15, width: 440, height: 330))
     let scaled = await scaleTracker.update(cgImage: context.makeImage()!, detailBox: detail, frameToken: 2)
     precondition(scaled?.status == "tracking" && (scaled?.artworkBox?[2] ?? 0) > 0.51, "Vision must measure changed object scale, not only replay its seed box")
-    let lost = await tracker.update(cgImage: image(offset: 0, blank: true), detailBox: detail, frameToken: 4)
-    precondition(lost?.status == "lost" && lost?.detailBox == nil && lost?.artworkBox == nil, "Blank/occluded frames must clear all regions")
+    let miss = await tracker.update(cgImage: image(offset: 0, blank: true), detailBox: detail, frameToken: 4)
+    precondition(miss?.status == "reacquiring" && miss?.detailBox == nil && miss?.artworkBox == nil, "A brief occlusion clears all regions but keeps the tracker")
     let stale = await tracker.update(cgImage: reference, detailBox: detail, frameToken: 3)
     precondition(stale == nil, "Late frames cannot restore old boxes")
+    let reacquired = await tracker.update(cgImage: reference, detailBox: detail, frameToken: 5)
+    precondition(reacquired?.status == "tracking" && reacquired?.detailBox != nil, "The artwork reappearing after a brief miss is tracked again without a rescan")
+    var token = 6
+    var lost: TrackingSnapshot?
+    for _ in 0..<ArtworkTracker.maxConsecutiveMisses {
+      lost = await tracker.update(cgImage: image(offset: 0, blank: true), detailBox: detail, frameToken: token); token += 1
+    }
+    precondition(lost?.status == "lost" && lost?.detailBox == nil && lost?.artworkBox == nil, "Sustained occlusion reports lost and clears all regions")
+    let after = await tracker.update(cgImage: reference, detailBox: detail, frameToken: token)
+    precondition(after?.status == "lost", "After sustained loss the worker is discarded until a new seed")
     await tracker.reset()
-    let reset = await tracker.update(cgImage: reference, detailBox: detail, frameToken: 5)
+    let reset = await tracker.update(cgImage: reference, detailBox: detail, frameToken: token + 1)
     precondition(reset?.status == "lost" && reset?.detailBox == nil)
-    print("Passed 6 tracking freshness policy checks and 9 actual Vision artwork tracking/translation/occlusion/reset checks. Axis-aligned baseline; perspective, video and glasses still require validation.")
+    print("Passed 6 tracking freshness policy checks and 12 actual Vision artwork tracking/translation/brief-miss/sustained-loss/reset checks. Axis-aligned baseline; perspective, video and glasses still require validation.")
   }
 
   static func image(offset: Int, blank: Bool) -> CGImage {
