@@ -89,6 +89,19 @@ final class CloudIntegrationUITests: XCTestCase {
       return narration.contains("selected=1;") && self.integer("livePlayed", from: narration) > beforePoint
     }
     let firstSelectedPlayback = integer("livePlayed")
+    // BUG-02 T01: the phone preview actually draws a tracked detail box for the
+    // automatically selected point (it may appear after the injected stall recovers).
+    wait("Phone preview draws a tracked detail box during the automatic tour", timeout: 60) {
+      self.app.descendants(matching: .any)["tracked-detail-box"].firstMatch.exists
+    }
+    let autoBox = XCTAttachment(screenshot: app.screenshot()); autoBox.name = "BUG-02 T01 phone tracked detail box (automatic)"
+    autoBox.lifetime = .keepAlways; add(autoBox)
+    // The box can legitimately disappear again (stale/lost frame); never query a vanished element.
+    let boxElement = app.descendants(matching: .any)["tracked-detail-box"].firstMatch
+    let diagnostic = app.descendants(matching: .any)["box-diagnostic"].firstMatch
+    let autoBoxValue = XCTAttachment(string: (boxElement.exists ? (boxElement.value as? String ?? "") : "box hidden again")
+      + "; " + (diagnostic.exists ? diagnostic.label : "no diagnostic"))
+    autoBoxValue.name = "BUG-02 T01 box value and diagnostic"; autoBoxValue.lifetime = .keepAlways; add(autoBoxValue)
 
     // Preserve the original point-one recovery and post-recovery audio gates.
     wait("Selected detail is playing before pause") { self.state.contains("playing=true") }
@@ -129,6 +142,13 @@ final class CloudIntegrationUITests: XCTestCase {
       return narration.contains("selected=2;") && narration.contains("playing=true")
         && narration.contains("locationBlocked=false") && self.integer("livePlayed", from: narration) > beforeSecondDetail
     }
+    // BUG-02 T02: after a manual change the drawn box belongs to point two.
+    wait("Phone preview box follows the manually selected point two", timeout: 45) {
+      let box = self.app.descendants(matching: .any)["tracked-detail-box"].firstMatch
+      return box.exists && (box.value as? String ?? "") == "point=2"
+    }
+    let manualBox = XCTAttachment(screenshot: app.screenshot()); manualBox.name = "BUG-02 T02 phone tracked detail box (point two)"
+    manualBox.lifetime = .keepAlways; add(manualBox)
     let changedPoint = XCTAttachment(string: state)
     changedPoint.name = "Phone changed to point two and played its actual native PCM"
     changedPoint.lifetime = .keepAlways; add(changedPoint)

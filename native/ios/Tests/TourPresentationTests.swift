@@ -53,6 +53,15 @@ import Foundation
     let empty = TourStop(number: nil, title: "Empty", text: "  \n ")
     check(TourProgress(stops: [empty]).finished, "Empty speech never hangs the queue")
     check(!TourSnapshot().subtitles, "Glasses subtitles are off by default")
+    // BUG-02: boxes map into the aspect-fit image, not the letterboxed container.
+    let portrait = CGSize(width: 504, height: 896), wide = CGSize(width: 360, height: 440)
+    let fitted = PreviewGeometry.fittedRect(image: portrait, in: wide)
+    check(abs(fitted.height - 440) < 0.001 && abs(fitted.width - 247.5) < 0.001 && abs(fitted.minX - 56.25) < 0.001,
+      "A portrait frame in a wide container is centred with side letterboxing")
+    let placed = PreviewGeometry.place([0.5, 0.25, 0.2, 0.1], image: portrait, in: wide)
+    check(placed.map { abs($0.minX - (56.25 + 0.5 * 247.5)) < 0.001 && abs($0.minY - 110) < 0.001 && abs($0.width - 49.5) < 0.001 } == true,
+      "A normalized detail box lands on the same image pixels after letterboxing")
+    check(PreviewGeometry.place([0.1, 0.1, 0, 0.2], image: portrait, in: wide) == nil, "Empty boxes are never drawn")
     let points = (1...8).map { TourPoint(number: $0, title: "Detail \($0)") }
     check(HUDLayout.points(on: 0, from: points).map(\.number) == [1, 2, 3], "Only three detail buttons per page")
     check(HUDLayout.page(containing: 7, points: points) == 2, "Current spoken point selects its own page")

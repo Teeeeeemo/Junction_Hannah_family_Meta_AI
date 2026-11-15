@@ -31,6 +31,14 @@ import CoreGraphics
     precondition(scaled?.status == "tracking" && (scaled?.artworkBox?[2] ?? 0) > 0.51, "Vision must measure changed object scale, not only replay its seed box")
     let miss = await tracker.update(cgImage: image(offset: 0, blank: true), detailBox: detail, frameToken: 4)
     precondition(miss?.status == "reacquiring" && miss?.detailBox == nil && miss?.artworkBox == nil, "A brief occlusion clears all regions but keeps the tracker")
+    precondition(!(miss?.reason ?? "").isEmpty, "A missing box always carries a distinguishable reason")
+    let overshoot = await ArtworkTracker().start(cgImage: reference, artworkBox: referenceBox, frameToken: 1)
+    precondition(overshoot.status == "ready")
+    let edgeTracker = ArtworkTracker()
+    _ = await edgeTracker.start(cgImage: reference, artworkBox: referenceBox, frameToken: 1)
+    // A detail touching the artwork edge (model rounding) is clamped, not dropped.
+    let edge = await edgeTracker.update(cgImage: reference, detailBox: [0.55, 0.6, 0.1005, 0.1003], frameToken: 2)
+    precondition(edge?.status == "tracking" && edge?.detailBox != nil, "Edge-touching detail boxes still produce a box")
     let stale = await tracker.update(cgImage: reference, detailBox: detail, frameToken: 3)
     precondition(stale == nil, "Late frames cannot restore old boxes")
     let reacquired = await tracker.update(cgImage: reference, detailBox: detail, frameToken: 5)
@@ -46,7 +54,7 @@ import CoreGraphics
     await tracker.reset()
     let reset = await tracker.update(cgImage: reference, detailBox: detail, frameToken: token + 1)
     precondition(reset?.status == "lost" && reset?.detailBox == nil)
-    print("Passed 7 tracking freshness policy checks and 12 actual Vision artwork tracking/translation/brief-miss/sustained-loss/reset checks. Axis-aligned baseline; perspective, video and glasses still require validation.")
+    print("Passed 7 tracking freshness policy checks and 14 actual Vision artwork tracking/translation/brief-miss/sustained-loss/reason/edge-clamp/reset checks. Axis-aligned baseline; perspective, video and glasses still require validation.")
   }
 
   static func image(offset: Int, blank: Bool) -> CGImage {

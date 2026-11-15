@@ -29,6 +29,8 @@ final class GlassCameraModel: ObservableObject {
   /// Whole-artwork outline from the same fresh Vision result; drawn on the
   /// phone preview so the visitor sees tracking even during the overview.
   @Published private(set) var trackedArtworkBox: [Double]?
+  @Published private(set) var lastTrackingReason = ""
+  private var lastCameraViewSentAt = Date.distantPast
   @Published private(set) var zoomImage: UIImage?
   @Published private(set) var zoom = 1
   @Published private(set) var translating = false
@@ -290,7 +292,10 @@ final class GlassCameraModel: ObservableObject {
       guard let camera = try connected.addCamera(config: StreamConfiguration(videoCodec: .raw, resolution: .medium, frameRate: 15)) else { return }
       self.camera = camera
       camera.stream.videoFramePublisher.listen { [weak self] frame in
-        guard let image = frame.makeUIImage() else { return }
+        guard let decoded = frame.makeUIImage() else { return }
+        // Vision, crops and boxes use raw CGImage pixels while SwiftUI honours
+        // imageOrientation; normalize so all share one upright coordinate space.
+        let image = GlassCameraModel.upright(decoded)
         let immutable = ImmutableFrame(image: image)
         Task { @MainActor [weak self] in self?.receive(immutable, run: run) }
       }.store(in: tokens)
@@ -583,9 +588,11 @@ final class GlassCameraModel: ObservableObject {
       guard let result else { return }
       guard Date().timeIntervalSince(capturedAt) <= 0.3 else {
         self.trackedDetailBox = nil; self.zoomImage = nil; self.lastTrackedImage = nil
+        self.lastTrackingReason = "tracking result too old (Vision slower than 0.3 s)"
         self.output.showInspection(nil); self.narration.setLocated(false); return
       }
       self.trackingStatus = result.status
+      self.lastTrackingReason = result.reason
       if result.status == "lost", self.recovery.phase == .idle, self.beginAutomaticRecovery(run: run) { return }
       guard version == self.selectionVersion else { return }
       let located = result.status == "tracking" && (self.narration.selectedNumber == nil || result.detailBox != nil)
@@ -609,6 +616,50 @@ final class GlassCameraModel: ObservableObject {
       self.refreshInspection(image)
     }
   }
+  /// Why the phone preview currently has (or lacks) a detail box.
+  var boxDiagnostic: String {
+    if guide == nil { return recognizing ? "waiting for artwork recognition" : "no artwork guide yet" }
+    if trackedDetailBox != nil { return "visible · point \(narration.selectedNumber.map(String.init) ?? "-")" }
+    let reason = lastTrackingReason.isEmpty ? "" : " · \(lastTrackingReason)"
+    if narration.selectedNumber == nil {
+      return trackingStatus == "tracking" ? "overview — only the artwork outline is shown" : "overview · \(trackingStatus)\(reason)"
+    }
+    if trackingStatus == "tracking" { return lastTrackingReason.isEmpty ? "locating the selected detail…" : lastTrackingReason }
+    return trackingStatus + reason
+  }
+  nonisolated static func upright(_ image: UIImage) -> UIImage {
+    guard image.imageOrientation != .up else { return image }
+    let format = UIGraphicsImageRendererFormat(); format.scale = image.scale
+    return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: image.size)) }
+  }
+  /// Downscaled camera frame with the tracked detail (gold) and artwork (dashed) boxes.
+  nonisolated static func cameraView(_ frame: CGImage, detail: [Double], artwork: [Double]?, number: Int?) -> UIImage {
+    let scale = min(1, 240 / Double(max(frame.width, frame.height)))
+    let size = CGSize(width: Double(frame.width) * scale, height: Double(frame.height) * scale)
+    let format = UIGraphicsImageRendererFormat(); format.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: format).image { context in
+      UIImage(cgImage: frame).draw(in: CGRect(origin: .zero, size: size))
+      let cg = context.cgContext
+      func rect(_ box: [Double]) -> CGRect { CGRect(x: box[0] * size.width, y: box[1] * size.height, width: box[2] * size.width, height: box[3] * size.height) }
+      if let artwork, artwork.count == 4 {
+        cg.setStrokeColor(UIColor.white.withAlphaComponent(0.85).cgColor); cg.setLineWidth(1.5); cg.setLineDash(phase: 0, lengths: [6, 4])
+        cg.stroke(rect(artwork))
+      }
+      if detail.count == 4 {
+        cg.setLineDash(phase: 0, lengths: []); cg.setStrokeColor(UIColor(red: 0.88, green: 0.77, blue: 0.5, alpha: 1).cgColor); cg.setLineWidth(4)
+        let box = rect(detail); cg.stroke(box)
+        if let number {
+          let label = NSAttributedString(string: " \(number) ", attributes: [.font: UIFont.boldSystemFont(ofSize: 16), .foregroundColor: UIColor.black,
+            .backgroundColor: UIColor(red: 0.88, green: 0.77, blue: 0.5, alpha: 1)])
+          label.draw(at: CGPoint(x: box.minX, y: max(0, box.minY - 20)))
+        }
+      }
+      // Honest labelling: a camera view, not an optical overlay on the artwork.
+      NSAttributedString(string: " CAMERA VIEW ", attributes: [.font: UIFont.boldSystemFont(ofSize: 12),
+        .foregroundColor: UIColor.white, .backgroundColor: UIColor.black.withAlphaComponent(0.6)])
+        .draw(at: CGPoint(x: 4, y: size.height - 20))
+    }
+  }
   func setZoom(_ value: Int) {
     guard [1,2,4].contains(value) else { return }
     zoom = value; if let lastTrackedImage { refreshInspection(lastTrackedImage) }
@@ -621,7 +672,20 @@ final class GlassCameraModel: ObservableObject {
     if phoneQuestionEditing != editing { phoneQuestionEditing = editing }
   }
   private func refreshInspection(_ image: UIImage) {
-    guard zoom > 1, let values = trackedDetailBox, values.count == 4, let cg = image.cgImage else {
+    guard zoom > 1 else {
+      zoomImage = nil
+      // BUG-02 stage 2: the same validated tracking geometry reaches the glasses
+      // Display as a labelled camera view with the current detail box. This is
+      // the camera image, not an optical overlay aligned to the real artwork.
+      if let detail = trackedDetailBox, let cg = image.cgImage {
+        // 1 fps: Display sends share the wireless link with the camera stream.
+        guard Date().timeIntervalSince(lastCameraViewSentAt) >= 1 else { return }
+        lastCameraViewSentAt = Date()
+        output.showInspection(Self.cameraView(cg, detail: detail, artwork: trackedArtworkBox, number: narration.selectedNumber))
+      } else { output.showInspection(nil) }
+      return
+    }
+    guard let values = trackedDetailBox, values.count == 4, let cg = image.cgImage else {
       zoomImage = nil; output.showInspection(nil); return
     }
     // Both rates crop the same detail-centered base range; no super-resolution.

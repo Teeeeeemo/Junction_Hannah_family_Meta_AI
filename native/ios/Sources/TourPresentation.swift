@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Pure tour progression, shared by speech and the two presentation surfaces.
 struct TourStop: Sendable {
@@ -65,6 +66,25 @@ enum NarrationLocationPolicy {
   static let continuityGraceSeconds: Double = 2.5
   static func mayResume(waitingForLocation: Bool, awaitingContinue: Bool) -> Bool {
     waitingForLocation && !awaitingContinue
+  }
+}
+
+/// Maps normalized frame boxes ([x, y, w, h] in 0...1, top-left origin) onto
+/// an aspect-fit image. The container is usually wider or taller than the
+/// fitted frame; using the container size directly shifts and stretches boxes.
+enum PreviewGeometry {
+  static func fittedRect(image: CGSize, in container: CGSize) -> CGRect {
+    guard image.width > 0, image.height > 0, container.width > 0, container.height > 0 else { return .zero }
+    let scale = min(container.width / image.width, container.height / image.height)
+    let size = CGSize(width: image.width * scale, height: image.height * scale)
+    return CGRect(x: (container.width - size.width) / 2, y: (container.height - size.height) / 2, width: size.width, height: size.height)
+  }
+  static func place(_ box: [Double], image: CGSize, in container: CGSize) -> CGRect? {
+    guard box.count == 4, box.allSatisfy({ $0.isFinite }), box[2] > 0, box[3] > 0 else { return nil }
+    let fitted = fittedRect(image: image, in: container)
+    guard fitted.width > 0 else { return nil }
+    return CGRect(x: fitted.minX + box[0] * fitted.width, y: fitted.minY + box[1] * fitted.height,
+      width: box[2] * fitted.width, height: box[3] * fitted.height)
   }
 }
 

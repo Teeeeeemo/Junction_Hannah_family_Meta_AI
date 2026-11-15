@@ -11,6 +11,8 @@ struct TrackingSnapshot: Sendable {
   let detailBox: [Double]?
   let frameToken: Int
   let confidence: Float
+  /// Why there is no artwork/detail region (empty when a detail box is present).
+  var reason: String = ""
 }
 
 /// A short delivery gap hides stale geometry while preserving the tracker.
@@ -60,7 +62,7 @@ actor ArtworkTracker {
     guard frameToken > lastFrameToken else { return nil }
     lastFrameToken = frameToken
     guard !busy else { return nil }
-    guard let worker else { return TrackingSnapshot(status: "lost", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0) }
+    guard let worker else { return TrackingSnapshot(status: "lost", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0, reason: "tracker released; artwork must be verified again") }
     busy = true; let run = generation
     let value = await Task.detached(priority: .userInitiated) { worker.track(cgImage, detailBox: detailBox, frameToken: frameToken) }.value
     busy = false
@@ -71,7 +73,7 @@ actor ArtworkTracker {
     // miss with no regions; only consecutive misses discard the worker.
     misses += 1
     guard misses >= Self.maxConsecutiveMisses else {
-      return TrackingSnapshot(status: "reacquiring", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0)
+      return TrackingSnapshot(status: "reacquiring", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0, reason: value.reason)
     }
     self.worker = nil; misses = 0
     return value
@@ -105,7 +107,9 @@ private final class ArtworkTrackingWorker: @unchecked Sendable {
   static let minimumConfidence: Float = 0.5
   private static func box(_ value: CGRect) -> [Double] { [value.minX, value.minY, value.width, value.height] }
   func track(_ image: CGImage, detailBox: [Double]?, frameToken: Int) -> TrackingSnapshot {
-    let lost = TrackingSnapshot(status: "lost", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0)
+    func lost(_ reason: String) -> TrackingSnapshot {
+      TrackingSnapshot(status: "lost", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0, reason: reason)
+    }
     let request = VNTrackObjectRequest(detectedObjectObservation: observation)
     request.trackingLevel = .accurate
     #if targetEnvironment(simulator) || os(macOS)
@@ -117,21 +121,33 @@ private final class ArtworkTrackingWorker: @unchecked Sendable {
       }
     }
     #endif
-    do { try sequence.perform([request], on: image, orientation: .up) } catch { return lost }
-    guard let result = request.results?.first as? VNDetectedObjectObservation, result.confidence >= Self.minimumConfidence else { return lost }
+    do { try sequence.perform([request], on: image, orientation: .up) } catch { return lost("Vision error: \(error.localizedDescription)") }
+    guard let result = request.results?.first as? VNDetectedObjectObservation else { return lost("no Vision result") }
+    guard result.confidence >= Self.minimumConfidence else { return lost(String(format: "low confidence %.2f", result.confidence)) }
     let tracked = Self.visionRect(result.boundingBox)
-    guard Self.rect(Self.box(tracked)) != nil,
-      abs(tracked.midX - previous.midX) < 0.25, abs(tracked.midY - previous.midY) < 0.25,
-      tracked.width / reference.width > 0.45, tracked.width / reference.width < 2.2,
-      tracked.height / reference.height > 0.45, tracked.height / reference.height < 2.2 else { return lost }
+    let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+    // A visitor standing close often has the painting extend past the frame
+    // edge; keep tracking while most of it is visible instead of rejecting it.
+    let visible = tracked.intersection(unit)
+    guard !visible.isNull, visible.width * visible.height >= 0.25 * tracked.width * tracked.height else { return lost("artwork mostly out of frame") }
+    guard abs(tracked.midX - previous.midX) < 0.25, abs(tracked.midY - previous.midY) < 0.25 else { return lost("implausible jump") }
+    guard tracked.width / reference.width > 0.45, tracked.width / reference.width < 2.2,
+      tracked.height / reference.height > 0.45, tracked.height / reference.height < 2.2 else { return lost("implausible scale change") }
     observation = result; previous = tracked
-    var mapped: [Double]?
-    if let detailBox, let detail = Self.rect(detailBox), reference.contains(detail) {
-      let referencePlacement = CGAffineTransform(translationX: reference.minX, y: reference.minY).scaledBy(x: reference.width, y: reference.height)
-      let trackedPlacement = CGAffineTransform(translationX: tracked.minX, y: tracked.minY).scaledBy(x: tracked.width, y: tracked.height)
-      let region = detail.applying(referencePlacement.inverted()).applying(trackedPlacement)
-      if Self.rect(Self.box(region)) != nil { mapped = Self.box(region) }
+    var mapped: [Double]?, reason = ""
+    if let detailBox, let detail = Self.rect(detailBox) {
+      // Clamp tiny overshoots from model coordinates instead of dropping the box.
+      let inside = detail.intersection(reference)
+      if inside.isNull || inside.width <= 0 || inside.height <= 0 { reason = "detail outside tracked artwork" }
+      else {
+        let referencePlacement = CGAffineTransform(translationX: reference.minX, y: reference.minY).scaledBy(x: reference.width, y: reference.height)
+        let trackedPlacement = CGAffineTransform(translationX: tracked.minX, y: tracked.minY).scaledBy(x: tracked.width, y: tracked.height)
+        let region = inside.applying(referencePlacement.inverted()).applying(trackedPlacement).intersection(unit)
+        if region.isNull || region.width < 0.005 || region.height < 0.005 { reason = "detail out of frame" }
+        else { mapped = Self.box(region) }
+      }
     }
-    return TrackingSnapshot(status: "tracking", artworkBox: Self.box(tracked), detailBox: mapped, frameToken: frameToken, confidence: result.confidence)
+    return TrackingSnapshot(status: "tracking", artworkBox: Self.box(visible), detailBox: mapped, frameToken: frameToken,
+      confidence: result.confidence, reason: reason)
   }
 }

@@ -64,17 +64,19 @@ struct MuseumPhoneView: View {
             Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 440)
               .overlay {
                 GeometryReader { geometry in
+                  // Boxes are normalized to the frame; map them into the aspect-fit
+                  // image area, not the whole (letterboxed) container.
                   // Whole artwork: thin dashed outline whenever Vision tracks it.
-                  if model.trackingStatus == "tracking", let box = model.trackedArtworkBox, box.count == 4 {
+                  if model.trackingStatus == "tracking", let box = model.trackedArtworkBox,
+                    let rect = PreviewGeometry.place(box, image: image.size, in: geometry.size) {
                     Rectangle().stroke(.white.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                      .frame(width: box[2] * geometry.size.width, height: box[3] * geometry.size.height)
-                      .position(x: (box[0] + box[2] / 2) * geometry.size.width, y: (box[1] + box[3] / 2) * geometry.size.height)
+                      .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY)
                       .accessibilityIdentifier("tracked-artwork-box")
                   }
                   // Current detail: bold gold box with its point number.
-                  if let box = model.trackedDetailBox, box.count == 4 {
+                  if let box = model.trackedDetailBox, let rect = PreviewGeometry.place(box, image: image.size, in: geometry.size) {
                     Rectangle().stroke(gold, lineWidth: 4)
-                      .frame(width: box[2] * geometry.size.width, height: box[3] * geometry.size.height)
+                      .frame(width: rect.width, height: rect.height)
                       .overlay(alignment: .topLeading) {
                         if let number = narration.selectedNumber {
                           Text("\(number)").font(.caption.bold()).foregroundStyle(.black)
@@ -82,14 +84,22 @@ struct MuseumPhoneView: View {
                             .offset(y: -20)
                         }
                       }
-                      .position(x: (box[0] + box[2] / 2) * geometry.size.width, y: (box[1] + box[3] / 2) * geometry.size.height)
+                      .position(x: rect.midX, y: rect.midY)
+                      .accessibilityElement(children: .ignore)
                       .accessibilityIdentifier("tracked-detail-box")
+                      .accessibilityValue("point=\(narration.selectedNumber.map(String.init) ?? "none")")
                   }
                 }
               }
               .clipShape(RoundedRectangle(cornerRadius: 16))
             if model.guide?.mode == "gemini" {
+              // Fixed line counts: changing status text must never move the controls below.
               Text(text("Image tracking: ", "画面追踪：") + model.trackingStatus).font(.caption)
+                .lineLimit(1).truncationMode(.tail)
+              // Distinguishable reason whenever no detail box is drawn (BUG-02 diagnostics).
+              Text(text("Detail box: ", "细节框：") + model.boxDiagnostic).font(.caption).foregroundStyle(.secondary)
+                .lineLimit(2, reservesSpace: true).truncationMode(.tail)
+                .accessibilityIdentifier("box-diagnostic")
             }
           }
           if let search = model.artworkSearch, search.status == "needs_confirmation" {

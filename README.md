@@ -1,6 +1,6 @@
 # Museum Companion — Meta Ray-Ban Display 博物馆导览
 
-项目状态（2026-11-15 06:40，演示版）：iOS 0.2.4 / build 8 是当前演示构建（[源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.4-ios-preview.1)）。针对 0.2.3 复测“全程没看到二维跟踪框”：模拟器录屏确认手机预览确有框但又小又细且频繁因 >1 秒断帧触发云端重识别而消失；0.2.4 将断帧重识别阈值放宽到 4 秒（期间本地 Vision 续跟），预览放大，细节框加粗并带编号，同时用虚线画出整幅作品轮廓（概览期间也可见）。眼镜 Display 仍没有框（镜片现实框及光学标定未实现）。按 PRD v0.4：细节列表加载即显示；细节标题最多三词（后端生成与翻译均校验）。环形倒计时尚在开发。模拟器离线 UI 10/11、原生云端主流程通过，唯一失败仍是模拟预览恢复；**手机框是否可见须真机确认**。详见 [测试进度](docs/10-ios-simulator-test-progress.md)。
+项目状态（2026-11-15 08:15，演示版）：iOS 0.2.5 / build 9 是当前演示构建（[源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.5-ios-preview.1)）。No.1／BUG-02：修复手机预览框的等比留白错位（0.2.4 回归）、画作超出画面即失跟、贴边细节被丢弃、帧方向不一致，并为无框给出可区分原因；同一追踪几何以标注“CAMERA VIEW”的相机小图送到眼镜 Display（显示通路，**非**镜片现实对齐）。模拟器云端验收 T01 自动首点出框、T02 手选 2 号框随之切换均通过；离线 UI 10/11。**真机手机框与眼镜显示待用户确认，镜片光学对齐未实现，P02 不关闭。**详见 [测试进度](docs/10-ios-simulator-test-progress.md)。
 
 最新已完成、待验证、阻塞与待办见 **[项目进度与待办](docs/07-project-progress.md)**。本次实际运行结果见 **[iOS 模拟器测试进度](docs/10-ios-simulator-test-progress.md)**；交给 Mac mini Codex 的任务见 **[接力 Prompt](docs/11-mac-mini-codex-handoff-prompt.md)**。
 
