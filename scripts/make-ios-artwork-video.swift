@@ -11,7 +11,12 @@ let source = URL(fileURLWithPath: CommandLine.arguments[1])
 let output = URL(fileURLWithPath: CommandLine.arguments[2])
 let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil)!
 let painting = CGImageSourceCreateImageAtIndex(imageSource, 0, nil)!
-let width = 960, height = 720, fps = 15, frames = 3600
+let durationText = CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "240"
+guard let seconds = Int(durationText), (1...600).contains(seconds) else {
+  fatalError("Artwork fixture duration must be an integer from 1 to 600 seconds")
+}
+let width = 960, height = 720, fps = 15
+let frames = fps * seconds
 let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
 let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: width, AVVideoHeightKey: height, AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 450_000]])
 let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height, kCVPixelBufferCGImageCompatibilityKey as String: true, kCVPixelBufferCGBitmapContextCompatibilityKey as String: true])
@@ -35,4 +40,4 @@ for frame in 0..<frames {
 }
 input.markAsFinished(); let done = DispatchSemaphore(value: 0); writer.finishWriting { done.signal() }; done.wait()
 guard writer.status == .completed else { fatalError("Artwork fixture did not finish") }
-print("Generated 240-second HEVC public-artwork fixture.")
+print("Generated \(seconds)-second HEVC public-artwork fixture.")

@@ -1,6 +1,42 @@
 import XCTest
 import UIKit
 
+/// The offline and real-service tests use the same physical text-entry path.
+@MainActor
+func textInteractionViewport(in app: XCUIApplication) -> CGRect {
+  var viewport = app.windows.firstMatch.frame.inset(by: UIEdgeInsets(top: 64, left: 2, bottom: 38, right: 2))
+  let keyboard = app.keyboards.firstMatch
+  if keyboard.exists {
+    let frame = keyboard.frame
+    if frame.intersects(viewport) { viewport.size.height = max(0, min(viewport.maxY, frame.minY) - viewport.minY) }
+  }
+  return viewport
+}
+
+@MainActor
+func focusTextFieldWithScreenTouch(_ field: XCUIElement, in app: XCUIApplication) {
+  var previous = CGRect.null
+  var stableSamples = 0
+  let stable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+    guard field.exists, field.isHittable else { stableSamples = 0; return false }
+    let frame = field.frame
+    guard !frame.isEmpty, !frame.isInfinite, !frame.isNull, textInteractionViewport(in: app).contains(frame) else {
+      stableSamples = 0; return false
+    }
+    stableSamples = frame == previous ? stableSamples + 1 : 0
+    previous = frame
+    return stableSamples >= 1
+  }, object: nil)
+  let result = XCTWaiter.wait(for: [stable], timeout: 5)
+  XCTAssertEqual(result, .completed, "Question field must settle onscreen before an actual touch")
+  guard result == .completed else { return }
+  let frame = field.frame
+  app.coordinate(withNormalizedOffset: .zero)
+    .withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+  XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5),
+    "The actual question-field touch must open the keyboard before typing")
+}
+
 /// Runs against the actual app and Meta DAT MockDeviceKit, with no backend.
 /// A generated HEVC file supplies moving frames; the guide is explicitly demo.
 @MainActor
@@ -299,5 +335,154 @@ final class DebugInputUITests: XCTestCase {
     XCTAssertTrue(error.label.contains("empty"))
     XCTAssertFalse(app.buttons["start-preview"].isEnabled)
     stateContains("frames=0; streaming=false")
+  }
+
+  func testQuestionFieldAcceptsTextWithoutCloudSubmission() {
+    exerciseQuestionField()
+  }
+
+  func testQuestionFieldRetainsFocusAcrossHUDRefreshes() {
+    app.launchArguments.append("--museum-hud-focus-test")
+    exerciseQuestionField(retainAcrossHUDRefreshes: true)
+  }
+
+  func testQuestionDoneRestoresDATPreviewAndCallbacks() {
+    app.launchArguments.append("--museum-hud-focus-test")
+    exerciseQuestionField(retainAcrossHUDRefreshes: true)
+    let beforeDoneFrames = cameraCount("frames")
+    let done = app.buttons["question-done"]
+    reveal(done); tapVisibleCoordinate(done)
+    XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)], timeout: 5), .completed,
+      "Done must end editing and dismiss the keyboard")
+
+    let preview = app.descendants(matching: .any)["mock-display"].firstMatch
+    reveal(preview, upward: false)
+    let hud = preview.webViews.firstMatch
+    XCTAssertTrue(hud.waitForExistence(timeout: 10), "The same actual DAT preview must reattach after Done")
+    XCTAssertTrue(hud.buttons["Play"].waitForExistence(timeout: 5), "Restored HUD must show the current paused state")
+    let more = hud.buttons["More points ›"]
+    reveal(more, upward: false); tapVisibleCoordinate(more)
+    let fourth = hud.buttons["4. Test point 4"]
+    reveal(fourth); tapVisibleCoordinate(fourth)
+    narrationContains("selected=4;")
+    XCTAssertTrue(hud.buttons["Pause"].waitForExistence(timeout: 5),
+      "A real DAT selection callback must update the restored HUD with the latest playing state")
+
+    // Reuse the same session and SDK view for a second complete editing cycle.
+    let field = app.textFields["Ask about this detail"].firstMatch
+    reveal(field); focusTextFieldWithScreenTouch(field, in: app)
+    let beforeSecondEdit = field.value as? String ?? ""
+    let insertion = " Another visible shape."
+    field.typeText(insertion)
+    let secondEdit = field.value as? String ?? ""
+    XCTAssertTrue(secondEdit.contains(insertion))
+    XCTAssertEqual(secondEdit.replacingOccurrences(of: insertion, with: ""), beforeSecondEdit)
+    retainsQuestionFocus(field, text: secondEdit)
+    reveal(done); tapVisibleCoordinate(done)
+    XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)], timeout: 5), .completed)
+    reveal(preview, upward: false)
+    let restoredAgain = preview.webViews.firstMatch
+    XCTAssertTrue(restoredAgain.waitForExistence(timeout: 10), "Done must restore the SDK view on repeated editing")
+    let hudPause = restoredAgain.buttons["Pause"]
+    XCTAssertTrue(hudPause.waitForExistence(timeout: 5), "The repeated restore must retain point four's current playing state")
+    reveal(hudPause); tapVisibleCoordinate(hudPause)
+    narrationContains("selected=4;"); narrationContains("playing=false")
+    XCTAssertTrue(restoredAgain.buttons["Play"].waitForExistence(timeout: 5),
+      "The real restored DAT Pause callback must publish the latest paused state")
+    XCTAssertGreaterThan(cameraCount("frames"), beforeDoneFrames, "Camera frames must continue through preview restoration")
+    stateContains("streaming=true"); stateContains("sessionActive=true")
+    let error = app.staticTexts["camera-error"].firstMatch
+    XCTAssertFalse(error.exists && error.label.lowercased().contains("display"), "Editing must not cause a display error")
+    checkpoint("Done restores the live DAT preview and real point selection callbacks")
+  }
+
+  private func cameraCount(_ key: String) -> Int64 {
+    let state = app.descendants(matching: .any)["camera-state"].firstMatch.value as? String ?? ""
+    let prefix = key + "="
+    return state.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+      .first { $0.hasPrefix(prefix) }.flatMap { Int64($0.dropFirst(prefix.count)) } ?? -1
+  }
+
+  private func retainsQuestionFocus(_ field: XCUIElement, text: String) {
+    let before = cameraCount("hudSends"), beforeFrames = cameraCount("frames")
+    XCTAssertGreaterThanOrEqual(before, 0, "The actual SDK send counter must be available")
+    let lost = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      !field.exists || !app.keyboards.firstMatch.exists || (field.value as? String) != text
+    }, object: nil)
+    lost.isInverted = true
+    let result = XCTWaiter.wait(for: [lost], timeout: 3)
+    let after = cameraCount("hudSends"), afterFrames = cameraCount("frames")
+    let evidence = XCTAttachment(string:
+      "HUD sends before=\(before); after=\(after); frames before=\(beforeFrames); after=\(afterFrames); keyboard and text retention result=\(result.rawValue)")
+    evidence.name = "Question focus across actual HUD sends"
+    evidence.lifetime = .keepAlways; add(evidence)
+    XCTAssertEqual(result, .completed, "HUD updates must retain the keyboard and the visitor's text")
+    XCTAssertGreaterThanOrEqual(after - before, 3, "At least three actual SDK sends must occur during text entry")
+    XCTAssertGreaterThanOrEqual(beforeFrames, 0, "The actual frame counter must be available")
+    XCTAssertGreaterThan(afterFrames, beforeFrames, "Real camera frames must continue during question editing")
+  }
+
+  private func exerciseQuestionField(retainAcrossHUDRefreshes: Bool = false) {
+    launchVideo()
+    let layout = app.buttons["load-layout"]
+    reveal(layout); layout.tap()
+    // An offline guide has no backend. Selecting this voice only exposes the
+    // normal question form; reconnectVoice refuses to start a cloud session.
+    let pause = app.buttons["toggle-playback"]
+    reveal(pause); pause.tap(); narrationContains("playing=false")
+    selectMenu("Voice source, Offline iOS speech", option: "Gemini Live · Aoede")
+    narrationContains("voice=gemini")
+    let field = app.textFields["Ask about this detail"].firstMatch
+    reveal(field); focusTextFieldWithScreenTouch(field, in: app)
+    let question = "Describe the visible colours."
+    field.typeText(question)
+    XCTAssertEqual(field.value as? String, question)
+    if retainAcrossHUDRefreshes { retainsQuestionFocus(field, text: question) }
+    reveal(field); focusTextFieldWithScreenTouch(field, in: app)
+    let followUp = " And one shape?"
+    field.typeText(followUp)
+    let edited = field.value as? String ?? ""
+    // A real second touch places the caret inside existing text. Verify the
+    // inserted characters and preservation of the original, wherever it lands.
+    XCTAssertTrue(edited.contains(followUp))
+    XCTAssertEqual(edited.replacingOccurrences(of: followUp, with: ""), question)
+    if retainAcrossHUDRefreshes { retainsQuestionFocus(field, text: edited) }
+    checkpoint("Question field accepts visitor text without submitting or connecting")
+  }
+
+  func testPlaybackControlsStayAnchoredWhileWaitingForAudio() {
+    launchVideo()
+    let layout = app.buttons["load-layout"]
+    reveal(layout); layout.tap()
+    let pause = app.buttons["toggle-playback"]
+    reveal(pause); tapVisibleCoordinate(pause); narrationContains("playing=false")
+    selectMenu("Voice source, Offline iOS speech", option: "Gemini Live · Aoede")
+    narrationContains("voice=gemini")
+
+    // Demo mode refuses a backend connection, while retaining its current text.
+    // Selecting a detail then uses the real Gemini waiting-for-audio path and
+    // clears the caption without producing or submitting a network request.
+    let narration = app.descendants(matching: .any)["narration"].firstMatch
+    let caption = app.staticTexts["current-caption"]
+    XCTAssertTrue(caption.exists)
+    XCTAssertFalse(caption.label.isEmpty)
+    reveal(pause)
+    let before = pause.frame.minY - narration.frame.minY
+    checkpoint("Playback control position before waiting for audio")
+
+    let first = app.buttons["point-1"]
+    reveal(first); tapVisibleCoordinate(first)
+    narrationContains("selected=1;")
+    narrationContains("voice=gemini")
+    reveal(pause, upward: false)
+    let after = pause.frame.minY - narration.frame.minY
+    let metrics = XCTAttachment(string: "Playback relative y before=\(before); after=\(after)")
+    metrics.name = "Playback controls relative to narration card"
+    metrics.lifetime = .keepAlways; add(metrics)
+    checkpoint("Playback control position while waiting for audio")
+    XCTAssertLessThanOrEqual(abs(after - before), 1,
+      "Clearing a caption while waiting for audio must not move playback controls within their card")
   }
 }

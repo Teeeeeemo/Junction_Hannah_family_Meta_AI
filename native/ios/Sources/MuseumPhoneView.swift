@@ -93,9 +93,20 @@ struct MuseumPhoneView: View {
           if model.inputMode.isMock, let display = model.debugPreview {
             VStack(alignment: .leading, spacing: 8) {
               Text(text("NATIVE GLASSES DISPLAY · SIMULATED", "原生眼镜界面预览 · 模拟")).font(.caption).foregroundStyle(gold)
-              MockDisplayPreview(view: display).id(ObjectIdentifier(display)).frame(height: 320)
+              Group {
+                if model.phoneQuestionEditing { Color.clear }
+                else { MockDisplayPreview(view: display).id(ObjectIdentifier(display)) }
+              }.frame(height: 320)
                 .accessibilityIdentifier("mock-display")
                 .background(.black).clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay {
+                  if model.phoneQuestionEditing {
+                    Text(text("Preview hidden while typing on your phone. Finish typing to show it again.",
+                      "手机输入时暂时隐藏模拟预览，结束输入后恢复。"))
+                      .font(.callout).foregroundStyle(.secondary).padding(24)
+                      .accessibilityIdentifier("mock-preview-typing")
+                  }
+                }
               Text(text("Tap the preview's buttons to test the actual DAT click handlers. This preview cannot validate optical alignment.",
                 "可点击预览中的按钮，测试实际 DAT 交互；此预览不能验收镜片现实对齐。"))
                 .font(.caption).foregroundStyle(.secondary)
@@ -159,7 +170,7 @@ struct MuseumPhoneView: View {
           }.font(.caption).foregroundStyle(.secondary)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("camera-state")
-            .accessibilityValue(String("frames=\(model.frameCount); streaming=\(model.streaming); sdk=\(model.sdkReady); source=\(model.inputMode.rawValue); sessionActive=\(model.sessionActive); connecting=\(model.connecting); mockEnabled=\(MockDeviceKit.shared.isEnabled); mockPaired=\(MockDeviceKit.shared.pairedDevices.count)"))
+            .accessibilityValue(String("frames=\(model.frameCount); streaming=\(model.streaming); sdk=\(model.sdkReady); source=\(model.inputMode.rawValue); sessionActive=\(model.sessionActive); connecting=\(model.connecting); mockEnabled=\(MockDeviceKit.shared.isEnabled); mockPaired=\(MockDeviceKit.shared.pairedDevices.count); recovery=\(model.recoveryPhase); recoveries=\(model.recoveryCount); injectedGap=\(model.injectedInputGap); gapBaseline=\(model.injectedGapRecoveryBaseline); recoveredPCMBase=\(model.recoveredPCMBase); hudSends=\(model.hudSendCount)"))
           if !model.error.isEmpty { Text(model.error).font(.callout).foregroundStyle(.red).textSelection(.enabled).accessibilityIdentifier("camera-error") }
           Text(text("Live camera + spoken guide. Keep this app in the foreground. Detail tracking and spatial boxes are still in development.",
             "实时相机与语音导览。使用时请保持 App 在前台；持续细节追踪与现实对齐框仍待接入。"))
@@ -210,7 +221,10 @@ struct MuseumPhoneView: View {
     }.padding(16).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 16))
   }
   private var narrationCard: some View {
-    NativeNarrationCard(narration: narration, language: model.language).equatable()
+    NativeNarrationCard(narration: narration, language: model.language, editingContext: model.phoneInputContext,
+      onQuestionEditing: { [context = model.phoneInputContext] editing in
+        model.setPhoneQuestionEditing(editing, context: context)
+      }).equatable()
   }
   private func pointsCard(_ guide: MuseumGuide) -> some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -263,18 +277,43 @@ private struct NativeInputSourcePicker: View, Equatable {
 }
 
 /// Camera frames must not recreate UIKit menus while a visitor changes speed.
-private struct NativeNarrationCard: View, Equatable {
-  @ObservedObject var narration: TourNarrator
+private struct NativeVoiceSourcePicker: View, Equatable {
+  let narration: TourNarrator
+  let mode: TourVoiceMode
   let language: String
   private let identity: ObjectIdentifier
-  @State private var question = ""
-  private let gold = Color(red: 0.88, green: 0.77, blue: 0.50)
-  private func text(_ en: String, _ cn: String) -> String { language == "zh" ? cn : en }
-  init(narration: TourNarrator, language: String) {
-    _narration = ObservedObject(wrappedValue: narration); self.language = language
+  init(narration: TourNarrator, mode: TourVoiceMode, language: String) {
+    self.narration = narration; self.mode = mode; self.language = language
     identity = ObjectIdentifier(narration)
   }
-  nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.identity == rhs.identity && lhs.language == rhs.language }
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.identity == rhs.identity && lhs.mode == rhs.mode && lhs.language == rhs.language
+  }
+  var body: some View {
+    Picker(language == "zh" ? "语音来源" : "Voice source", selection: Binding(get: { mode }, set: { narration.selectVoice($0) })) {
+      Text("Gemini Live · Aoede").tag(TourVoiceMode.gemini)
+      Text(language == "zh" ? "离线系统朗读" : "Offline iOS speech").tag(TourVoiceMode.offline)
+    }.pickerStyle(.menu).accessibilityIdentifier("voice-source")
+  }
+}
+
+private struct NativeNarrationCard: View, Equatable {
+  @ObservedObject var narration: TourNarrator
+  @ScaledMetric(relativeTo: .body) private var captionHeight: CGFloat = 112
+  let language: String
+  let editingContext: Int
+  let onQuestionEditing: (Bool) -> Void
+  private let identity: ObjectIdentifier
+  private let gold = Color(red: 0.88, green: 0.77, blue: 0.50)
+  private func text(_ en: String, _ cn: String) -> String { language == "zh" ? cn : en }
+  init(narration: TourNarrator, language: String, editingContext: Int, onQuestionEditing: @escaping (Bool) -> Void) {
+    _narration = ObservedObject(wrappedValue: narration); self.language = language
+    self.editingContext = editingContext; self.onQuestionEditing = onQuestionEditing
+    identity = ObjectIdentifier(narration)
+  }
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.identity == rhs.identity && lhs.language == rhs.language && lhs.editingContext == rhs.editingContext
+  }
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       HStack {
@@ -284,12 +323,19 @@ private struct NativeNarrationCard: View, Equatable {
           : narration.sectionTitle).font(.subheadline.weight(.semibold))
         Spacer(); Text(narration.rateLabel).monospacedDigit().accessibilityIdentifier("speech-rate-value")
       }.foregroundStyle(gold)
-      if narration.locationBlocked && narration.selectedNumber != nil {
-        Text(text("Waiting for reliable detail tracking. Keep the artwork in view; if tracking does not recover, tap Scan again.",
-          "正在定位当前细节，暂不播放讲解。请对准作品；若无法恢复，请重新扫描。"))
-          .font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("waiting-for-detail-location")
+      // Sentence boundaries and tracking changes must not move the playback controls.
+      ScrollView {
+        VStack(alignment: .leading, spacing: 8) {
+          if narration.locationBlocked && narration.selectedNumber != nil {
+            Text(text("Waiting for reliable detail tracking. Keep the artwork in view; if tracking does not recover, tap Scan again.",
+              "正在定位当前细节，暂不播放讲解。请对准作品；若无法恢复，请重新扫描。"))
+              .font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("waiting-for-detail-location")
+          }
+          Text(narration.sentence).font(.body).fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("current-caption")
+        }.frame(maxWidth: .infinity, alignment: .leading)
       }
-      if !narration.sentence.isEmpty { Text(narration.sentence).font(.body).fixedSize(horizontal: false, vertical: true) }
+      .frame(height: captionHeight)
       HStack {
         Button { narration.toggle() } label: {
           Label(text(narration.playing ? "Pause" : "Play", narration.playing ? "暂停" : "播放"), systemImage: narration.playing ? "pause.fill" : "play.fill")
@@ -306,17 +352,13 @@ private struct NativeNarrationCard: View, Equatable {
         Text(text("Audio: ", "音频输出：") + narration.audioOutput)
         Spacer(); AudioOutputPicker().frame(width: 30, height: 30)
       }.font(.caption).foregroundStyle(.secondary)
-      Picker(text("Voice source", "语音来源"), selection: Binding(get: { narration.voiceMode }, set: { narration.selectVoice($0) })) {
-        Text("Gemini Live · Aoede").tag(TourVoiceMode.gemini)
-        Text(text("Offline iOS speech", "离线系统朗读")).tag(TourVoiceMode.offline)
-      }.pickerStyle(.menu)
+      NativeVoiceSourcePicker(narration: narration, mode: narration.voiceMode, language: language).equatable()
       Text(narration.voiceStatus).font(.caption).foregroundStyle(.secondary)
       if narration.voiceMode == .gemini {
         Button(text("Reconnect Gemini voice", "重新连接 Gemini 语音")) { narration.reconnectVoice() }
         Button(narration.listening ? text("Stop microphone", "关闭麦克风") : text("Talk to Gemini", "与 Gemini 对话")) { narration.toggleMicrophone() }
-        TextField(text("Ask about this detail", "询问当前细节"), text: $question)
-          .textFieldStyle(.roundedBorder).onSubmit { narration.ask(question); question = "" }
-        Button(text("Ask", "提问")) { narration.ask(question); question = "" }.disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        NativeQuestionComposer(narration: narration, language: language, editingContext: editingContext,
+          onEditing: onQuestionEditing).equatable()
         if narration.awaitingContinue { Text(text("Say or tap Continue to resume this point.", "说“继续”或点播放，从当前点继续。")) }
       }
     }.padding(18).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
@@ -327,8 +369,102 @@ private struct NativeNarrationCard: View, Equatable {
   }
 }
 
+/// Keyboard state belongs to a stable subtree, independent of PCM counters.
+private struct NativeQuestionComposer: View, Equatable {
+  let narration: TourNarrator
+  let language: String
+  let editingContext: Int
+  let onEditing: (Bool) -> Void
+  private let identity: ObjectIdentifier
+  @State private var question = ""
+  @FocusState private var focused: Bool
+  @State private var keyboardWasVisible = false
+  init(narration: TourNarrator, language: String, editingContext: Int, onEditing: @escaping (Bool) -> Void) {
+    self.narration = narration; self.language = language; identity = ObjectIdentifier(narration)
+    self.editingContext = editingContext; self.onEditing = onEditing
+  }
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.identity == rhs.identity && lhs.language == rhs.language && lhs.editingContext == rhs.editingContext
+  }
+  private func submit() {
+    let text = question; question = ""; focused = false; onEditing(false); narration.ask(text)
+  }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      TextField(language == "zh" ? "询问当前细节" : "Ask about this detail", text: $question)
+        .textFieldStyle(.roundedBorder).focused($focused).onSubmit { submit() }
+        .simultaneousGesture(TapGesture().onEnded {
+          // Detach synchronously before the visitor's one focus request.
+          onEditing(true)
+          focused = true
+          #if DEBUG
+          print("MUSE_QUESTION_TAP")
+          museumFocusDiagnostic("question-tap")
+          #endif
+        })
+        .onChange(of: focused) { _, value in
+          if !value { onEditing(false) }
+          #if DEBUG
+          print("MUSE_QUESTION_FOCUS \(value)")
+          museumFocusDiagnostic("question-focus-\(value)")
+          #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+          keyboardWasVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+          if keyboardWasVisible { keyboardWasVisible = false; focused = false; onEditing(false) }
+        }
+        .onDisappear {
+          onEditing(false)
+          #if DEBUG
+          museumFocusDiagnostic("composer-disappear")
+          #endif
+        }
+        #if DEBUG
+        .onAppear { museumFocusDiagnostic("composer-appear") }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+          museumFocusDiagnostic("keyboard-show")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+          museumFocusDiagnostic("keyboard-hide")
+        }
+        #endif
+      Button(language == "zh" ? "提问" : "Ask") { submit() }
+        .disabled(question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+    .toolbar {
+      ToolbarItemGroup(placement: .keyboard) {
+        Spacer()
+        Button(language == "zh" ? "完成" : "Done") { focused = false; onEditing(false) }
+          .accessibilityIdentifier("question-done")
+      }
+    }
+  }
+}
+
+#if DEBUG
+/// Only responder classes and fixed event names; never question text or credentials.
+@MainActor
+func museumFocusDiagnostic(_ event: String) {
+  let arguments = ProcessInfo.processInfo.arguments
+  guard arguments.contains("--museum-ui-test"),
+    arguments.contains("--museum-hud-focus-test") || arguments.contains("--museum-cloud-test") else { return }
+  func firstResponder(in view: UIView) -> UIView? {
+    if view.isFirstResponder { return view }
+    return view.subviews.lazy.compactMap { firstResponder(in: $0) }.first
+  }
+  let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+  let responder = windows.lazy.compactMap { firstResponder(in: $0) }.first
+  let name = responder.map { String(describing: type(of: $0)) } ?? "none"
+  print("MUSE_FOCUS t=\(ProcessInfo.processInfo.systemUptime) event=\(event) responder=\(name)")
+}
+#endif
+
 private struct MockDisplayPreview: UIViewRepresentable {
   let view: UIView
+  // Keep the SDK's original embedding path; a custom parent can interfere with
+  // its hosted renderer. SwiftUI removes this branch while phone typing.
   func makeUIView(context: Context) -> UIView { view }
   func updateUIView(_ uiView: UIView, context: Context) { }
 }

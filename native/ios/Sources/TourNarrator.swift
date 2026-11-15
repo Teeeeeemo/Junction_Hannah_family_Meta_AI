@@ -53,6 +53,7 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
     live.onInterrupted = { [weak self] in
       guard let self else { return }
+      self.waitingForLocation = false
       self.awaitingContinue = true; self.playing = true; self.paused = false
       self.voiceStatus = "Gemini Live · listening / answering"; self.publish()
     }
@@ -77,6 +78,20 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     live.$outputRoute.sink { [weak self] in self?.audioOutput = $0 }.store(in: &subscriptions)
     live.$receivedPCMBytes.sink { [weak self] in self?.liveReceivedBytes = $0 }.store(in: &subscriptions)
     live.$completedPCMFrames.sink { [weak self] in self?.livePlayedFrames = $0 }.store(in: &subscriptions)
+    #if DEBUG
+    for name in [AVAudioSession.interruptionNotification, AVAudioSession.routeChangeNotification,
+      AVAudioSession.mediaServicesWereLostNotification, AVAudioSession.mediaServicesWereResetNotification] {
+      NotificationCenter.default.publisher(for: name).sink { [weak self] notification in
+        let event = notification.name.rawValue
+        let interruption = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0
+        let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+        Task { @MainActor [weak self] in
+          guard let self, ProcessInfo.processInfo.arguments.contains("--museum-ui-test") else { return }
+          print("MUSE_TTS_AUDIO t=\(ProcessInfo.processInfo.systemUptime) event=\(event) interruption=\(interruption) reason=\(reason) speaking=\(self.synthesizer.isSpeaking) paused=\(self.synthesizer.isPaused)")
+        }
+      }.store(in: &subscriptions)
+    }
+    #endif
   }
   var rateLabel: String { Self.label(for: rate) }
   static func label(for value: Double) -> String { String(format: "%g×", value) }
@@ -150,7 +165,10 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     playing = false; paused = true; publish()
   }
   func resume() {
-    guard !locationBlocked || progress.current?.number == nil else { waitingForLocation = true; publish(); return }
+    guard !locationBlocked || progress.current?.number == nil else {
+      if awaitingContinue { awaitingContinue = false; cancelUtterance() }
+      waitingForLocation = true; publish(); return
+    }
     if awaitingContinue {
       awaitingContinue = false; cancelUtterance(); if progress.finished { progress.replayCurrent() }; speakCurrent(); return
     }
@@ -165,7 +183,8 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
   }
   func ask(_ text: String) {
     guard voiceMode == .gemini, live.ready, let guide else { onError?("Questions require a ready Gemini Live connection."); return }
-    awaitingContinue = true; paused = false; playing = true
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    waitingForLocation = false; awaitingContinue = true; paused = false; playing = true
     live.ask(text, guide: guide, currentDetailID: guide.details.first { $0.number == selectedNumber }?.id); publish()
   }
   func toggleMicrophone() {
@@ -178,10 +197,15 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     locationBlocked = blocked
     if blocked, selectedNumber != nil, playing, !awaitingContinue {
       waitingForLocation = true; pause(forLocation: true)
-    } else if !blocked, waitingForLocation {
+    } else if !blocked, NarrationLocationPolicy.mayResume(waitingForLocation: waitingForLocation, awaitingContinue: awaitingContinue) {
       waitingForLocation = false; paused = false; speakCurrent()
     }
     publish()
+  }
+  /// Update verified frame coordinates without changing any playback intent.
+  func updateLocationContext(_ guide: MuseumGuide) {
+    self.guide = guide
+    live.updateContext(guide: guide, currentDetailID: guide.details.first { $0.number == selectedNumber }?.id)
   }
   func setRate(_ value: Double) {
     guard Self.rates.contains(value), value != rate else { return }
@@ -231,20 +255,60 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
       }
       utterance.voice = voice
       utterance.rate = min(AVSpeechUtteranceMaximumSpeechRate, max(AVSpeechUtteranceMinimumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * Float(rate)))
-      utteranceID = ObjectIdentifier(utterance); playing = true; refreshRoute(); publish(); synthesizer.speak(utterance)
+      utteranceID = ObjectIdentifier(utterance); playing = true; refreshRoute(); publish()
+      #if DEBUG
+      debugSpeech("enqueue", id: ObjectIdentifier(utterance), length: sentence.count)
+      #endif
+      synthesizer.speak(utterance)
     } catch { playing = false; publish(); onError?("Speech: " + error.localizedDescription) }
   }
   private func refreshRoute() { audioOutput = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName).joined(separator: ", ") }
   private func publish() { onSnapshot?(snapshot) }
+  #if DEBUG
+  private func debugSpeech(_ event: String, id: ObjectIdentifier, length: Int = 0) {
+    guard ProcessInfo.processInfo.arguments.contains("--museum-ui-test") else { return }
+    let route = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+    print("MUSE_TTS t=\(ProcessInfo.processInfo.systemUptime) event=\(event) current=\(utteranceID == id) speaking=\(synthesizer.isSpeaking) paused=\(synthesizer.isPaused) selected=\(selectedNumber.map(String.init) ?? "intro") length=\(length) route=\(route)")
+  }
+  #endif
   nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
     let id = ObjectIdentifier(utterance)
-    Task { @MainActor [weak self] in guard let self, self.utteranceID == id else { return }; self.refreshRoute() }
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      #if DEBUG
+      self.debugSpeech("start", id: id)
+      #endif
+      guard self.utteranceID == id else { return }; self.refreshRoute()
+    }
   }
   nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
     let id = ObjectIdentifier(utterance)
     Task { @MainActor [weak self] in
-      guard let self, self.utteranceID == id else { return }
+      guard let self else { return }
+      #if DEBUG
+      self.debugSpeech("finish", id: id)
+      #endif
+      guard self.utteranceID == id else { return }
       self.utteranceID = nil; self.progress.advanceSentence(); self.speakCurrent()
     }
   }
+  #if DEBUG
+  nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+    willSpeakRangeOfSpeechString characterRange: NSRange, utterance: AVSpeechUtterance) {
+    let id = ObjectIdentifier(utterance), end = characterRange.location + characterRange.length
+    Task { @MainActor [weak self] in self?.debugSpeech("progress", id: id, length: end) }
+  }
+  nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+    let id = ObjectIdentifier(utterance)
+    Task { @MainActor [weak self] in self?.debugSpeech("cancel", id: id) }
+  }
+  nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didPause utterance: AVSpeechUtterance) {
+    let id = ObjectIdentifier(utterance)
+    Task { @MainActor [weak self] in self?.debugSpeech("pause", id: id) }
+  }
+  nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didContinue utterance: AVSpeechUtterance) {
+    let id = ObjectIdentifier(utterance)
+    Task { @MainActor [weak self] in self?.debugSpeech("continue", id: id) }
+  }
+  #endif
 }

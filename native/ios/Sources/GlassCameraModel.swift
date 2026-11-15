@@ -27,6 +27,8 @@ final class GlassCameraModel: ObservableObject {
   @Published private(set) var zoomImage: UIImage?
   @Published private(set) var zoom = 1
   @Published private(set) var translating = false
+  @Published private(set) var recoveryCount = 0
+  @Published private(set) var recoveredPCMBase: Int64 = 0
   @Published var showingSources = false
   @Published var referenceArtworkID = ""
   @Published private(set) var inputMode: DebugInputMode
@@ -34,6 +36,8 @@ final class GlassCameraModel: ObservableObject {
   @Published private(set) var sdkReady = false
   @Published private(set) var sessionActive = false
   @Published private(set) var debugPreview: UIView?
+  @Published private(set) var phoneQuestionEditing = false
+  var phoneInputContext: Int { generation }
   @Published private(set) var videoName = ""
   let narration = TourNarrator()
   private var wearables: (any WearablesInterface)?
@@ -47,6 +51,17 @@ final class GlassCameraModel: ObservableObject {
   private let output = GlassesDisplay()
   private let tracker = ArtworkTracker()
   private var trackingTask: Task<Void, Never>?
+  private var recoveryTask: Task<Void, Never>?
+  private var recoveryTimeout: Task<Void, Never>?
+  @Published private var recovery = ArtworkRecoveryState()
+  var recoveryPhase: String { String(describing: recovery.phase) }
+  var hudSendCount: Int {
+    #if DEBUG
+    output.debugSendCount
+    #else
+    0
+    #endif
+  }
   private var trackingEnabled = false
   private var selectionVersion = 0
   private var lastSelection: Int?
@@ -67,6 +82,27 @@ final class GlassCameraModel: ObservableObject {
   private var generation = 0
   private var lastFrameAt = Date.distantPast
   private var attemptedAutomaticScan = false
+  #if DEBUG
+  private var testInputStallUntil: Date?
+  private var testInputStallCompleted = false
+  private var testPointAudioBaseline: Int64?
+  private var testGapRecoveryBaseline: Int?
+  private var testHUDRefreshTask: Task<Void, Never>?
+  #endif
+  var injectedInputGap: Bool {
+    #if DEBUG
+    testInputStallCompleted
+    #else
+    false
+    #endif
+  }
+  var injectedGapRecoveryBaseline: Int {
+    #if DEBUG
+    testGapRecoveryBaseline ?? -1
+    #else
+    -1
+    #endif
+  }
 
   init(configurationError: String?) {
     #if targetEnvironment(simulator)
@@ -160,6 +196,20 @@ final class GlassCameraModel: ObservableObject {
     let example = MuseumGuide.layoutExample(language: language)
     guide = example; narration.load(example, language: language)
     status = "OFFLINE LAYOUT EXAMPLE — not recognition of the current frame."
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--museum-ui-test"),
+      ProcessInfo.processInfo.arguments.contains("--museum-hud-focus-test") {
+      testHUDRefreshTask?.cancel()
+      testHUDRefreshTask = Task { [weak self] in
+        while !Task.isCancelled {
+          try? await Task.sleep(for: .milliseconds(500))
+          guard !Task.isCancelled, let self, self.streaming, self.guide?.mode == "demo" else { return }
+          // Exercise the real DAT preview refresh; no model/audio/frame result is injected.
+          self.output.show(self.narration.snapshot)
+        }
+      }
+    }
+    #endif
   }
   func register() async {
     guard !inputMode.isMock, let wearables else { return }
@@ -253,6 +303,26 @@ final class GlassCameraModel: ObservableObject {
   }
   private func receive(_ frame: ImmutableFrame, run: Int) {
     guard run == generation, camera != nil else { return }
+    #if DEBUG
+    // Opt-in failure injection drops real decoded deliveries. It never creates
+    // frames, recognition results, or audio, and is absent from Release builds.
+    if ProcessInfo.processInfo.arguments.contains("--museum-cloud-test"),
+      ProcessInfo.processInfo.environment["MUSE_UI_TEST_INPUT_STALL"] == "1" {
+      if !testInputStallCompleted, testInputStallUntil == nil,
+        guide?.mode == "gemini", narration.selectedNumber == 1, narration.playing, !narration.awaitingContinue {
+        if testPointAudioBaseline == nil { testPointAudioBaseline = narration.livePlayedFrames }
+        if narration.livePlayedFrames > (testPointAudioBaseline ?? .max) {
+          testInputStallUntil = Date().addingTimeInterval(1.4)
+          print("MUSE_TEST_INPUT_STALL_BEGIN point=1")
+        }
+      }
+      if let until = testInputStallUntil {
+        if Date() < until { return }
+        testInputStallUntil = nil; testInputStallCompleted = true
+        print("MUSE_TEST_INPUT_STALL_END")
+      }
+    }
+    #endif
     preview = frame.image; frameCount += 1; lastFrameAt = Date(); streaming = true; connecting = false
     if frameWatchdog == nil {
       frameWatchdog = Task { [weak self] in
@@ -271,7 +341,20 @@ final class GlassCameraModel: ObservableObject {
               // Fresh frames still have to pass Vision confidence and age gates.
               self.trackingStatus = "lost — input stalled; waiting for fresh frames"
               if freshness == .rescan {
-                self.trackingEnabled = false; self.trackingStatus = "lost — input interrupted; scan again"
+                #if DEBUG
+                if self.testInputStallUntil != nil {
+                  self.testGapRecoveryBaseline = self.recoveryCount
+                  print("MUSE_TEST_INPUT_STALL_OBSERVED point=1 recoveries=\(self.recoveryCount)")
+                }
+                #endif
+                self.trackingEnabled = false
+                self.trackingTask?.cancel(); self.trackingTask = nil
+                self.recovery.interrupt(afterFrame: self.frameCount)
+                self.trackingStatus = self.recovery.phase == .failed
+                  ? "lost — recovery interrupted; scan again" : "lost — waiting to verify the artwork again"
+                if self.recovery.phase == .failed {
+                  self.failRecovery("Input interrupted again during verification. Tap Scan again.", run: run, context: self.artworkVersion)
+                }
                 await self.tracker.reset()
               }
             }
@@ -281,6 +364,9 @@ final class GlassCameraModel: ObservableObject {
       }
     }
     updateTracking(frame.image, run: run)
+    if backendReady, !recognizing, guide?.mode == "gemini", recovery.begin(frameToken: frameCount) {
+      recoverArtwork(frame, number: frameCount, run: run)
+    }
     if frameCount >= 8 && !attemptedAutomaticScan && backendReady {
       attemptedAutomaticScan = true; analyzeCurrentFrame()
     }
@@ -291,6 +377,7 @@ final class GlassCameraModel: ObservableObject {
     guard let preview, Date().timeIntervalSince(lastFrameAt) < 1 else {
       error = "No recent frame is available. Replay the video or reconnect the camera before scanning."; return
     }
+    recoveryTask?.cancel(); recoveryTimeout?.cancel(); recovery.reset()
     let previous = artworkSearch
     let priorIdentity = guide?.recognition?.selectedCandidate?.identityKey
     let priorProgress = narration.progressSnapshot, priorPaused = narration.paused, priorAwaitingContinue = narration.awaitingContinue
@@ -353,6 +440,108 @@ final class GlassCameraModel: ObservableObject {
       } catch { if !Task.isCancelled && run == self.generation { self.error = error.localizedDescription; self.status = "Scan failed. Reframe and tap Scan again." } }
     }
   }
+  /// A bounded re-identification of the same planar artwork. Reuses its existing
+  /// annotations; this does not claim perspective correction or new detections.
+  private func recoverArtwork(_ initialFrame: ImmutableFrame, number initialNumber: Int, run: Int) {
+    artworkVersion += 1; let context = artworkVersion
+    trackingTask?.cancel(); trackingTask = nil; trackingEnabled = false
+    recognizing = true; error = ""; status = "Verifying the artwork after the input interruption…"
+    recoveryTimeout?.cancel()
+    recoveryTimeout = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(45))
+      guard !Task.isCancelled, let self, self.generation == run, self.artworkVersion == context,
+        self.recovery.phase != .idle else { return }
+      self.failRecovery("Artwork verification timed out. Tap Scan again.", run: run, context: context)
+    }
+    recoveryTask = Task { [weak self, backend] in
+      guard let self else { return }
+      defer {
+        if self.generation == run && self.artworkVersion == context {
+          self.recognizing = false; self.recoveryTimeout?.cancel(); self.recoveryTask = nil
+        }
+      }
+      do {
+        var frame = initialFrame, number = initialNumber
+        // Retain the identity reference, but require fresh visual observations.
+        // Hints carry no selection or pre-interruption stability count.
+        guard let hints = self.guide?.recognition?.identityHints() else {
+          throw self.failure("No reliable artwork identity reference is available. Tap Scan again.")
+        }
+        var lock: MuseumArtworkSearch? = hints
+        for attempt in 0..<3 {
+          guard !Task.isCancelled, run == self.generation, context == self.artworkVersion,
+            self.recovery.observe(frameToken: number) else { throw self.failure("No fresh observation is available.") }
+          let captured = frame
+          guard let jpeg = await Task.detached(priority: .userInitiated, operation: {
+            captured.image.jpegData(compressionQuality: 0.9)
+          }).value else { throw self.failure("Could not encode the recovery frame.") }
+          let result = try await backend.searchArtwork(jpeg: jpeg, language: self.language,
+            previous: lock, confirmedCandidateId: nil)
+          guard !Task.isCancelled, run == self.generation, context == self.artworkVersion else { return }
+          lock = result
+          if result.status == "locked", self.recovery.observationCount >= 2 { break }
+          guard result.status == "searching", attempt < 2 else {
+            throw self.failure("The same artwork could not be verified. Tap Scan again.")
+          }
+          let deadline = Date().addingTimeInterval(2)
+          while self.frameCount <= number {
+            try await Task.sleep(for: .milliseconds(60))
+            guard !Task.isCancelled, run == self.generation, context == self.artworkVersion,
+              Date() < deadline else { throw self.failure("No new camera frame arrived.") }
+          }
+          guard let next = self.preview, Date().timeIntervalSince(self.lastFrameAt) < 1 else {
+            throw self.failure("The camera input is not fresh.")
+          }
+          frame = ImmutableFrame(image: next); number = self.frameCount
+        }
+        guard let lock, let candidate = lock.selectedCandidate, let image = frame.image.cgImage,
+          candidate.box.count == 4 else { throw self.failure("No reliable planar artwork region is available.") }
+        let box = candidate.box
+        let rect = CGRect(x: box[0] * Double(image.width), y: box[1] * Double(image.height),
+          width: box[2] * Double(image.width), height: box[3] * Double(image.height))
+          .integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let roi = MuseumROI(frameId: "\(run):\(number)", frameWidth: image.width, frameHeight: image.height,
+          box: [rect.minX / Double(image.width), rect.minY / Double(image.height),
+            rect.width / Double(image.width), rect.height / Double(image.height)])
+        guard let currentGuide = self.guide else { throw self.failure("The active guide changed.") }
+        if let reason = currentGuide.relocalizationFailure(to: lock, roi: roi) {
+          #if DEBUG
+          let oldIdentity = currentGuide.recognition?.selectedCandidate?.identityKey ?? "missing"
+          print("MUSE_RECOVERY_REJECT reason=\(reason) oldIdentity=\(oldIdentity.prefix(160)) newIdentity=\(candidate.identityKey.prefix(160)) candidate=\(candidate.box) roi=\(roi.box) frame=\(roi.frameWidth)x\(roi.frameHeight)")
+          #endif
+          throw self.failure("The artwork identity or full visible region changed. Tap Scan again.")
+        }
+        let seed = await self.tracker.start(cgImage: image, artworkBox: roi.box, frameToken: number)
+        guard !Task.isCancelled, run == self.generation, context == self.artworkVersion else { return }
+        // Merge into the latest guide, so a concurrent language change survives.
+        guard seed.status == "ready", let latest = self.guide?.relocalized(to: lock, roi: roi),
+          self.recovery.seeded() else { throw self.failure("The artwork could not be tracked. Tap Scan again.") }
+        self.guide = latest; self.artworkSearch = lock
+        self.narration.updateLocationContext(latest)
+        self.trackingEnabled = true; self.trackingStatus = "ready — waiting for a fresh tracking result"
+        self.status = "Same artwork verified. Locating the selected detail…"
+        let deadline = Date().addingTimeInterval(3)
+        while self.recovery.phase == .awaitingTracking {
+          try await Task.sleep(for: .milliseconds(60))
+          guard !Task.isCancelled, run == self.generation, context == self.artworkVersion else { return }
+          if self.recovery.phase != .awaitingTracking { break }
+          guard Date() < deadline else { throw self.failure("No fresh detail location was recovered. Tap Scan again.") }
+        }
+        if self.recovery.phase == .idle { self.status = "Artwork tracking recovered. Your selected point is unchanged." }
+      } catch {
+        if !Task.isCancelled { self.failRecovery(error.localizedDescription, run: run, context: context) }
+      }
+    }
+  }
+  private func failRecovery(_ message: String, run: Int, context: Int) {
+    guard generation == run, artworkVersion == context, recovery.phase != .idle else { return }
+    recovery.fail(); recoveryTask?.cancel(); recoveryTimeout?.cancel()
+    trackingTask?.cancel(); trackingTask = nil
+    recognizing = false; trackingEnabled = false
+    trackedDetailBox = nil; zoomImage = nil; lastTrackedImage = nil; output.showInspection(nil)
+    narration.setLocated(false); trackingStatus = "lost — verification failed; scan again"
+    error = message; status = "Tracking is paused. Reframe the artwork and tap Scan again."
+  }
   private func updateTracking(_ image: UIImage, run: Int) {
     guard trackingEnabled, trackingTask == nil, let cgImage = image.cgImage else { return }
     let version = selectionVersion, number = frameCount, context = artworkVersion
@@ -361,7 +550,8 @@ final class GlassCameraModel: ObservableObject {
     let box = detail.flatMap { guide?.frameBox(for: $0) }
     trackingTask = Task { [weak self, tracker] in
       let result = await tracker.update(cgImage: cgImage, detailBox: box, frameToken: number)
-      guard let self, run == self.generation, context == self.artworkVersion, !Task.isCancelled else { return }
+      guard let self, run == self.generation, context == self.artworkVersion, !Task.isCancelled,
+        self.recovery.canAcceptTrackingResults else { return }
       self.trackingTask = nil
       guard let result else { return }
       guard Date().timeIntervalSince(capturedAt) <= 0.3 else {
@@ -370,16 +560,33 @@ final class GlassCameraModel: ObservableObject {
       }
       self.trackingStatus = result.status
       guard version == self.selectionVersion else { return }
+      let located = result.status == "tracking" && (self.narration.selectedNumber == nil || result.detailBox != nil)
+      if self.recovery.phase == .awaitingTracking {
+        guard self.recovery.acceptTracking(frameToken: number, fresh: true, detailLocated: located) else {
+          self.failRecovery("A reliable current detail location was not found. Tap Scan again.", run: run, context: context)
+          return
+        }
+        self.recoveryTimeout?.cancel()
+        self.recoveredPCMBase = self.narration.livePlayedFrames
+        self.recoveryCount += 1
+      }
       self.trackedDetailBox = result.detailBox
       self.lastTrackedImage = image
       self.lastTrackingAt = Date()
-      self.narration.setLocated(result.status == "tracking" && (self.narration.selectedNumber == nil || result.detailBox != nil))
+      self.narration.setLocated(located)
       self.refreshInspection(image)
     }
   }
   func setZoom(_ value: Int) {
     guard [1,2,4].contains(value) else { return }
     zoom = value; if let lastTrackedImage { refreshInspection(lastTrackedImage) }
+  }
+  /// The mock web preview manages its own focus. Only detach its phone view;
+  /// the DAT session, sends, camera, tracking and audio keep running.
+  func setPhoneQuestionEditing(_ editing: Bool, context: Int) {
+    guard context == generation, inputMode.isMock, sessionActive, let debugPreview else { return }
+    if editing { debugPreview.removeFromSuperview() }
+    if phoneQuestionEditing != editing { phoneQuestionEditing = editing }
   }
   private func refreshInspection(_ image: UIImage) {
     guard zoom > 1, let values = trackedDetailBox, values.count == 4, let cg = image.cgImage else {
@@ -403,11 +610,22 @@ final class GlassCameraModel: ObservableObject {
     do {
       let translated = guide.mode == "demo" ? MuseumGuide.layoutExample(language: value) : try await backend.translate(guide, language: value)
       guard version == languageVersion, run == generation, context == artworkVersion else { return }
-      self.guide = translated; language = value; narration.replaceTranslation(translated, language: value)
+      guard let merged = self.guide?.mergingTranslation(translated) else {
+        throw failure("The translated guide no longer matches the current artwork details.")
+      }
+      self.guide = merged; language = value; narration.replaceTranslation(merged, language: value)
     } catch { if version == languageVersion, run == generation { self.error = "Translation: " + error.localizedDescription } }
   }
   private func failure(_ text: String) -> NSError { NSError(domain: "MuseumGuide", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
   func stop() {
+    phoneQuestionEditing = false
+    recoveryTask?.cancel(); recoveryTask = nil; recoveryTimeout?.cancel(); recoveryTimeout = nil; recovery.reset()
+    recoveryCount = 0; recoveredPCMBase = 0
+    #if DEBUG
+    testHUDRefreshTask?.cancel(); testHUDRefreshTask = nil
+    testInputStallUntil = nil; testInputStallCompleted = false
+    testPointAudioBaseline = nil; testGapRecoveryBaseline = nil
+    #endif
     videoImportID = UUID()
     languageVersion += 1; translating = false
     artworkVersion += 1; frameWatchdog?.cancel(); frameWatchdog = nil; lastTrackedImage = nil

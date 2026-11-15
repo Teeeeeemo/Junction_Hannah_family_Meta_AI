@@ -6,6 +6,10 @@ import Foundation
     func check(_ result: @autoclosure () -> Bool, _ message: String) {
       precondition(result(), message); checks += 1
     }
+    check(NarrationLocationPolicy.mayResume(waitingForLocation: true, awaitingContinue: false), "Tracking-paused narration may resume when location returns")
+    check(!NarrationLocationPolicy.mayResume(waitingForLocation: false, awaitingContinue: false), "Fresh tracking cannot override a manual pause")
+    check(!NarrationLocationPolicy.mayResume(waitingForLocation: true, awaitingContinue: true), "Relocation cannot interrupt a question or its wait-for-continue state")
+    check(!NarrationLocationPolicy.mayResume(waitingForLocation: false, awaitingContinue: true), "Answers remain selected and await explicit Continue")
     let overview = TourStop(number: nil, title: "Overview", text: "The painting was made in 1889. Look at the cypress.")
     let first = TourStop(number: 1, title: "Cypress", text: "A dark tree. It links earth and sky.")
     let second = TourStop(number: 2, title: "Mountains", text: "Blue hills in the distance.")

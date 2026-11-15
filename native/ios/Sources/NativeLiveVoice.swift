@@ -150,6 +150,13 @@ import Combine
     language = value; currentGuide = guide
     if ready, let context = try? object(guide) { send(["type": "context", "context": context, "language": value]) }
   }
+  /// Relocation changes factual context without starting or interrupting audio.
+  func updateContext(guide: MuseumGuide, currentDetailID: String?) {
+    currentGuide = guide
+    if ready, let context = try? object(guide) {
+      send(["type": "context", "context": context, "language": language, "currentDetailId": currentDetailID ?? ""])
+    }
+  }
   func startMicrophone() async {
     guard ready, !listening else { return }
     microphoneGeneration += 1; let micRun = microphoneGeneration, run = generation

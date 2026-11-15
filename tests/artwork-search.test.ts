@@ -22,8 +22,56 @@ describe('artwork search and locked ROI protocol', () => {
     expect(first.status).toBe('needs_confirmation');
     expect((await searchArtwork(image, 'en', first, undefined, generate)).status).toBe('needs_confirmation');
     const chosen = first.candidates[1].id;
-    expect((await searchArtwork(image, 'en', first, chosen, generate)).selectedCandidateId).toBe(chosen);
-    expect((await searchArtwork(image, 'en', first, chosen, generate)).status).toBe('locked');
+    const confirmed = await searchArtwork(image, 'en', first, chosen, generate);
+    expect(confirmed.selectedCandidateId).toBe(chosen);
+    expect(confirmed.status).toBe('locked');
+    expect(confirmed.observationCount).toBe(2);
+    await expect(analyze(image, 'en', undefined, async () => ({ roiVerified: true,
+      artwork: { id: 'unidentified', title: 'Portrait' }, overview: 'Visible portrait.',
+      details: [{ identityKey: 'red-mark', title: 'Red mark', description: 'Visible red.', box_2d: [100,100,300,300], sourceIds: [] }],
+    }), { lock: confirmed, roi: { frameId: 'confirmed-frame', frameWidth: 3000, frameHeight: 2000, box: confirmed.candidates[1].box } })).resolves.toMatchObject({ coordinateSpace: 'artwork_roi' });
+  });
+  it('keeps zero-count identity hints but requires two new observations after recovery', async () => {
+    const generate = async () => raw([painting]);
+    const first = await searchArtwork(image, 'en', undefined, undefined, generate);
+    const prior = await searchArtwork(image, 'en', first, undefined, generate);
+    const hints = { ...prior, status: 'searching' as const, observationCount: 0, selectedCandidateId: undefined };
+    const before = JSON.stringify(hints);
+    let prompt = '';
+    const freshFirst = await searchArtwork(image, 'en', hints, undefined, async request => {
+      prompt = request.prompt; return raw([painting]);
+    });
+    expect(prompt).toContain(painting.identityKey);
+    expect(prompt).toContain('copy its previous identityKey exactly');
+    expect(prompt).toContain('Do not reuse a previous key for a different work or when the match is uncertain');
+    expect(freshFirst.status).toBe('searching');
+    expect(freshFirst.observationCount).toBe(1);
+    const freshSecond = await searchArtwork(image, 'en', freshFirst, undefined, generate);
+    expect(freshSecond.status).toBe('locked');
+    expect(freshSecond.observationCount).toBe(2);
+    expect(freshSecond.selectedCandidateId).toBe(prior.selectedCandidateId);
+    expect(JSON.stringify(hints)).toBe(before);
+  });
+  it('does not rewrite a changed identity key to match a recovery hint', async () => {
+    const first = await searchArtwork(image, 'en', undefined, undefined, async () => raw([painting]));
+    const hints = { ...first, observationCount: 0, selectedCandidateId: undefined };
+    const changed = { ...painting, identityKey: 'different-appearance-key' };
+    const result = await searchArtwork(image, 'en', hints, undefined, async () => raw([changed]));
+    expect(result.status).toBe('searching');
+    expect(result.observationCount).toBe(1);
+    expect(result.candidates[0].identityKey).toBe(changed.identityKey);
+    expect(result.selectedCandidateId).not.toBe(first.selectedCandidateId);
+  });
+  it('cannot turn zero-count searching hints into a one-observation lock by passing confirmation', async () => {
+    const generate = async () => raw([painting]);
+    const first = await searchArtwork(image, 'en', undefined, undefined, generate);
+    const hints = { ...first, observationCount: 0, selectedCandidateId: undefined };
+    const result = await searchArtwork(image, 'en', hints, first.selectedCandidateId, generate);
+    expect(result.status).toBe('searching');
+    expect(result.observationCount).toBe(1);
+    const second = await searchArtwork(image, 'en', result, first.selectedCandidateId, generate);
+    expect(second.status).toBe('locked');
+    expect(second.observationCount).toBe(2);
   });
   it('rejects empty, blurred, occluded and weak evidence instead of making a tour', async () => {
     for (const value of [raw([], 'no_artwork'), raw([painting], 'uncertain'), raw([{ ...painting, confidence: 0.4 }])]) {

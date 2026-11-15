@@ -57,7 +57,11 @@ done
 common=(-project "$snapshot/native/ios/MuseumCompanion.xcodeproj" -scheme MuseumCompanion -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath "$output_dir/DerivedData" -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES)
 if ! xcodebuild "${common[@]}" build-for-testing > "$output_dir/build.log" 2>&1; then tail -50 "$output_dir/build.log"; exit 1; fi
 xcrun simctl install "$simulator_id" "$output_dir/DerivedData/Build/Products/Debug-iphonesimulator/MuseumCompanion.app"
-swift "$snapshot/scripts/make-ios-artwork-video.swift" "$snapshot/public/artworks/wheat-field.jpg" "$output_dir/museum-cloud-artwork.mp4" > "$output_dir/video.log" 2>&1
+# Cover bounded re-identification and both question turns without an artificial
+# 240-second end-of-file interruption. Frame timing and codec are unchanged.
+video_seconds="${IOS_CLOUD_VIDEO_SECONDS:-600}"
+printf '%s\n' "$video_seconds" > "$output_dir/video-duration-seconds.txt"
+swift "$snapshot/scripts/make-ios-artwork-video.swift" "$snapshot/public/artworks/wheat-field.jpg" "$output_dir/museum-cloud-artwork.mp4" "$video_seconds" > "$output_dir/video.log" 2>&1
 container="$(xcrun simctl get_app_container "$simulator_id" com.muse.museumcompanion data)"
 mkdir -p "$container/Documents"
 cp "$output_dir/museum-cloud-artwork.mp4" "$container/Documents/"

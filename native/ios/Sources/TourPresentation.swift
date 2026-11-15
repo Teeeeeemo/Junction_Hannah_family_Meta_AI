@@ -59,6 +59,12 @@ struct TourProgress: Sendable {
   mutating func restart() { stopIndex = 0; sentenceIndex = 0; finished = stops.isEmpty; automatic = true }
 }
 
+enum NarrationLocationPolicy {
+  static func mayResume(waitingForLocation: Bool, awaitingContinue: Bool) -> Bool {
+    waitingForLocation && !awaitingContinue
+  }
+}
+
 struct TourPoint: Sendable { let number: Int; let title: String }
 struct TourSnapshot: Sendable {
   var artworkTitle = ""

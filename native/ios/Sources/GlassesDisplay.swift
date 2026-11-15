@@ -16,6 +16,9 @@ final class GlassesDisplay {
   private var renderTask: Task<Void, Never>?
   private var epoch = SessionEpoch()
   private var inspectionImage: UIImage?
+  #if DEBUG
+  private(set) var debugSendCount = 0
+  #endif
   var onError: ((String) -> Void)?
   var onSelect: ((Int?) -> Void)?
   var onTogglePlayback: (() -> Void)?
@@ -41,8 +44,16 @@ final class GlassesDisplay {
     }
     snapshot = value; render()
   }
-  func showInspection(_ image: UIImage?) { inspectionImage = image; render() }
+  func showInspection(_ image: UIImage?) {
+    // Tracking still updates the phone, but an already hidden inspection window
+    // must not resend the entire native HUD on every camera frame.
+    guard image != nil || inspectionImage != nil else { return }
+    inspectionImage = image; render()
+  }
   func stop() {
+    #if DEBUG
+    debugSendCount = 0
+    #endif
     epoch.invalidate()
     ready = false; pending = false; renderTask?.cancel(); renderTask = nil
     listeners.clear(); display?.stop(); display = nil; snapshot = TourSnapshot(); page = 0; inspectionImage = nil
@@ -57,7 +68,15 @@ final class GlassesDisplay {
       while self.epoch.accepts(run) && self.ready && self.pending && !Task.isCancelled {
         self.pending = false
         let view = self.view(run: run)
-        do { try await display.send(view) }
+        #if DEBUG
+        museumFocusDiagnostic("hud-send")
+        #endif
+        do {
+          try await display.send(view)
+          #if DEBUG
+          if self.epoch.accepts(run) { self.debugSendCount += 1 }
+          #endif
+        }
         catch { if self.epoch.accepts(run) && !Task.isCancelled { self.onError?(error.localizedDescription) } }
       }
       if self.epoch.accepts(run) && !Task.isCancelled { self.renderTask = nil }
