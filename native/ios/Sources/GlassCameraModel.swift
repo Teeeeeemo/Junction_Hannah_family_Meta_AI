@@ -70,6 +70,8 @@ final class GlassCameraModel: ObservableObject {
   private var frameWatchdog: Task<Void, Never>?
   private var lastTrackedImage: UIImage?
   private var lastTrackingAt = Date.distantPast
+  private var lastAutoRecoveryAt = Date.distantPast
+  private static let autoRecoveryCooldown: TimeInterval = 8
   private var detailRegistry = MuseumDetailRegistry()
   private let tokens = ListenerTokenBag()
   private var session: DeviceSession?
@@ -364,6 +366,9 @@ final class GlassCameraModel: ObservableObject {
       }
     }
     updateTracking(frame.image, run: run)
+    if !trackingEnabled, trackingStatus.hasPrefix("lost") || recovery.phase == .failed {
+      _ = beginAutomaticRecovery(run: run)
+    }
     if backendReady, !recognizing, guide?.mode == "gemini", recovery.begin(frameToken: frameCount) {
       recoverArtwork(frame, number: frameCount, run: run)
     }
@@ -542,6 +547,22 @@ final class GlassCameraModel: ObservableObject {
     narration.setLocated(false); trackingStatus = "lost — verification failed; scan again"
     error = message; status = "Tracking is paused. Reframe the artwork and tap Scan again."
   }
+  /// Demo build: a Vision loss (or a failed verification) re-verifies the same
+  /// artwork through the bounded recovery path instead of waiting for a manual
+  /// rescan. Rate-limited so looking away does not flood the backend.
+  private func beginAutomaticRecovery(run: Int) -> Bool {
+    guard run == generation, recovery.phase == .idle || recovery.phase == .failed, !recognizing,
+      backendReady, guide?.mode == "gemini", guide?.recognition?.identityHints() != nil,
+      Date().timeIntervalSince(lastAutoRecoveryAt) > Self.autoRecoveryCooldown else { return false }
+    lastAutoRecoveryAt = Date()
+    trackingTask?.cancel(); trackingTask = nil; trackingEnabled = false
+    trackedDetailBox = nil; zoomImage = nil; lastTrackedImage = nil; output.showInspection(nil)
+    narration.setLocated(false)
+    if recovery.phase == .failed { recovery.reset() }
+    recovery.interrupt(afterFrame: frameCount)
+    trackingStatus = "lost — re-verifying the artwork automatically"; error = ""
+    return true
+  }
   private func updateTracking(_ image: UIImage, run: Int) {
     guard trackingEnabled, trackingTask == nil, let cgImage = image.cgImage else { return }
     let version = selectionVersion, number = frameCount, context = artworkVersion
@@ -559,6 +580,7 @@ final class GlassCameraModel: ObservableObject {
         self.output.showInspection(nil); self.narration.setLocated(false); return
       }
       self.trackingStatus = result.status
+      if result.status == "lost", self.recovery.phase == .idle, self.beginAutomaticRecovery(run: run) { return }
       guard version == self.selectionVersion else { return }
       let located = result.status == "tracking" && (self.narration.selectedNumber == nil || result.detailBox != nil)
       if self.recovery.phase == .awaitingTracking {

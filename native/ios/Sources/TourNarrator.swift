@@ -41,6 +41,8 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
   private var tourGeneration = 0
   private var subscriptions = Set<AnyCancellable>()
   private var waitingForLocation = false
+  private var locationGraceTask: Task<Void, Never>?
+  private var locationGraceBypass = false
 
   override init() {
     super.init(); synthesizer.delegate = self
@@ -167,7 +169,7 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
   func resume() {
     guard !locationBlocked || progress.current?.number == nil else {
       if awaitingContinue { awaitingContinue = false; cancelUtterance() }
-      waitingForLocation = true; publish(); return
+      waitingForLocation = true; publish(); scheduleLocationGrace(); return
     }
     if awaitingContinue {
       awaitingContinue = false; cancelUtterance(); if progress.finished { progress.replayCurrent() }; speakCurrent(); return
@@ -191,16 +193,30 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     if listening { live.stopMicrophone() }
     else if voiceMode == .gemini { Task { await live.startMicrophone() } }
   }
+  /// Demo continuity: losing the tracked box hides geometry but never silences
+  /// narration that has already started. A new point waits briefly for a
+  /// location, then starts anyway; the box reappears when tracking recovers.
   func setLocated(_ located: Bool) {
     let blocked = guide?.mode == "gemini" && !located
     guard blocked != locationBlocked else { return }
     locationBlocked = blocked
-    if blocked, selectedNumber != nil, playing, !awaitingContinue {
-      waitingForLocation = true; pause(forLocation: true)
-    } else if !blocked, NarrationLocationPolicy.mayResume(waitingForLocation: waitingForLocation, awaitingContinue: awaitingContinue) {
+    if !blocked, NarrationLocationPolicy.mayResume(waitingForLocation: waitingForLocation, awaitingContinue: awaitingContinue) {
+      locationGraceTask?.cancel(); locationGraceTask = nil
       waitingForLocation = false; paused = false; speakCurrent()
     }
     publish()
+  }
+  private func scheduleLocationGrace() {
+    locationGraceTask?.cancel()
+    let stop = progress.current?.number, generation = tourGeneration
+    locationGraceTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .seconds(NarrationLocationPolicy.continuityGraceSeconds))
+      guard !Task.isCancelled, let self, self.tourGeneration == generation, self.waitingForLocation,
+        !self.awaitingContinue, self.progress.current?.number == stop else { return }
+      self.locationGraceTask = nil
+      self.waitingForLocation = false; self.paused = false; self.locationGraceBypass = true
+      self.speakCurrent()
+    }
   }
   /// Update verified frame coordinates without changing any playback intent.
   func updateLocationContext(_ guide: MuseumGuide) {
@@ -225,6 +241,7 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
   }
   private func cancelUtterance() {
+    locationGraceTask?.cancel(); locationGraceTask = nil; locationGraceBypass = false
     utteranceID = nil; synthesizer.stopSpeaking(at: .immediate); live.interrupt(); playing = false; paused = false
   }
   private func speakCurrent() {
@@ -235,7 +252,10 @@ final class TourNarrator: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
     if guide?.mode == "gemini", current.number != nil, current.number != selectedNumber { locationBlocked = true }
     sectionTitle = current.title; selectedNumber = current.number; finished = false
-    if locationBlocked && current.number != nil { waitingForLocation = true; playing = false; paused = true; publish(); return }
+    if locationBlocked && current.number != nil && !locationGraceBypass {
+      waitingForLocation = true; playing = false; paused = true; publish(); scheduleLocationGrace(); return
+    }
+    locationGraceBypass = false
     paused = false
     if voiceMode == .gemini {
       sentence = ""; playing = true

@@ -60,6 +60,9 @@ struct TourProgress: Sendable {
 }
 
 enum NarrationLocationPolicy {
+  /// How long a newly selected point waits for a tracked location before the
+  /// demo build narrates it anyway (the box appears once tracking recovers).
+  static let continuityGraceSeconds: Double = 2.5
   static func mayResume(waitingForLocation: Bool, awaitingContinue: Bool) -> Bool {
     waitingForLocation && !awaitingContinue
   }

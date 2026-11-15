@@ -1,6 +1,6 @@
 # Museum Companion — Meta Ray-Ban Display 博物馆导览
 
-项目状态（2026-11-15，已暂停）：已发布 iOS 0.2.0 / build 4 [源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.0-ios-preview.1)，离线 UI 7/7。0.2.1 是 WIP 源码草稿，收尾回归 0/1，未生成新 IPA；结果与交接见 [测试进度](docs/10-ios-simulator-test-progress.md)。真机仍由用户最后验收。
+项目状态（2026-11-15 04:00，演示版）：iOS 0.2.2 / build 6 是当前演示构建（[源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.2-ios-preview.1)）。在 0.2.1 基础上加入演示连续性：追踪丢失只隐藏框、不打断讲解，并自动重新确认同一作品。模拟器离线 UI 10/11、原生云端主流程通过，唯一已知失败只在模拟预览中出现；详见 [测试进度](docs/10-ios-simulator-test-progress.md)。真机由用户验收。
 
 最新已完成、待验证、阻塞与待办见 **[项目进度与待办](docs/07-project-progress.md)**。本次实际运行结果见 **[iOS 模拟器测试进度](docs/10-ios-simulator-test-progress.md)**；交给 Mac mini Codex 的任务见 **[接力 Prompt](docs/11-mac-mini-codex-handoff-prompt.md)**。
 

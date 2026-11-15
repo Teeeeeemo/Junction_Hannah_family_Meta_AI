@@ -1,5 +1,26 @@
 # iOS 模拟器测试进度与交接
 
+## 2026-11-15 04:00：0.2.2 / build 6 演示构建
+
+由用户接手开发；基于 `aca786a`（0.2.1 WIP）。
+
+**行为变更（演示连续性，经用户同意，与 PRD“不讲无法定位的点”有意不同）：**
+
+- 追踪丢失只清除框和局部窗，不再暂停正在进行的讲解（`TourNarrator.setLocated`）。
+- 切换到新点位时最多等待 2.5 秒定位（`NarrationLocationPolicy.continuityGraceSeconds`），超时仍开始讲解，定位恢复后框再出现。
+- Vision 单帧丢失、初次播种失败或验证失败后，自动走 0.2.1 的有限同作品重新确认流程，不再必须手动“Scan again”；两次自动尝试至少间隔 8 秒（`GlassCameraModel.beginAutomaticRecovery`）。
+- `CloudIntegrationUITests` 的断流恢复断言改为新规则：恢复完成且讲解持续出声；导览可能已越过 1 号点。
+
+| 检查 | 结果（Mac mini，Xcode 26.6，iOS Simulator 26.5） |
+|---|---|
+| Web / 后端 | 87/87，生产构建通过 |
+| 原生纯逻辑 | 导览、会话、恢复、点位注册、追踪、Live 协议、离线音频全部通过 |
+| Release 归档与 IPA | 通过 |
+| 离线 UI（`scripts/test-ios-ui.sh`） | 11 项中 10 通过，云端用例按设计跳过。此前阻塞的 `testNativeHUDAndAutomaticTour` 通过。失败：`testQuestionDoneRestoresDATPreviewAndCallbacks`（手机输入结束后，恢复的模拟 DAT 预览未显示当前暂停状态） |
+| 原生云端（`scripts/test-ios-cloud.sh`，真实 Gemini） | 视频 → 搜索锁定 → ROI 分析 → 实际 PCM → 总览自动进入 1 号 → 受控断流 → 自动恢复且讲解持续 → 手动选 2 号并实际出声 → 暂停后提问并实际播出回答，均通过。最后一步失败：与离线失败相同，恢复的模拟预览网页 DOM 未暴露“Play” |
+
+两个失败都只涉及模拟设备模式下手机输入后的预览恢复。真眼镜模式不显示该预览（`setPhoneQuestionEditing` 只在 mock 模式生效）。实体眼镜、现实框和真实麦克风仍待用户上机验收。证据位于 Mac mini 的 `~/Developer/Junction/takeover-logs/`（`ui-022/`、`cloud-022b/`）。
+
 ## 2026-11-15 03:03：已暂停，0.2.1 尚未发布
 
 用户最新要求：停止继续修复，记录问题，收完当前回归；可用才生成 IPA 并同时上传 GitHub，随后暂停等待指令。收尾回归失败，已停止修复和后续测试，不生成新 IPA。本轮最新指令要求把未通过验收的进度也提交到 GitHub，因此将两份草稿分别保存为 WIP 分支；这不代表发布可用版本，不再自动推进开发。
