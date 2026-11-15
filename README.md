@@ -1,6 +1,6 @@
 # Museum Companion — Meta Ray-Ban Display 博物馆导览
 
-项目状态（2026-11-15 08:15，演示版）：iOS 0.2.5 / build 9 是当前演示构建（[源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.5-ios-preview.1)）。No.1／BUG-02：修复手机预览框的等比留白错位（0.2.4 回归）、画作超出画面即失跟、贴边细节被丢弃、帧方向不一致，并为无框给出可区分原因；同一追踪几何以标注“CAMERA VIEW”的相机小图送到眼镜 Display（显示通路，**非**镜片现实对齐）。模拟器云端验收 T01 自动首点出框、T02 手选 2 号框随之切换均通过；离线 UI 10/11。**真机手机框与眼镜显示待用户确认，镜片光学对齐未实现，P02 不关闭。**详见 [测试进度](docs/10-ios-simulator-test-progress.md)。
+项目状态（2026-11-15 08:35，演示版）：iOS 0.2.6 / build 10 是当前演示构建（[源码与 IPA](https://github.com/Teeeeeemo/Junction_Hannah_family_Meta_AI/releases/tag/v0.2.6-ios-preview.1)）。包含 0.2.5 的 No.1／BUG-02 跟随框修复（手机相机画面框 + 眼镜“CAMERA VIEW”小图显示通路；镜片现实对齐未实现，P02 不关闭），以及最终交付方案的参观模式／开发者设置、首页状态灯和一键“开始导览”。模拟器离线 UI 10/11、云端 T01／T02 框验收通过；真机待用户确认。详见 [测试进度](docs/10-ios-simulator-test-progress.md) 与 [最终交付方案](docs/16-final-delivery-and-ui-plan.md)。
 
 最新已完成、待验证、阻塞与待办见 **[项目进度与待办](docs/07-project-progress.md)**。本次实际运行结果见 **[iOS 模拟器测试进度](docs/10-ios-simulator-test-progress.md)**；交给 Mac mini Codex 的任务见 **[接力 Prompt](docs/11-mac-mini-codex-handoff-prompt.md)**。
 

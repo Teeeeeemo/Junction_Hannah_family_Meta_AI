@@ -30,6 +30,7 @@ final class GlassCameraModel: ObservableObject {
   /// phone preview so the visitor sees tracking even during the overview.
   @Published private(set) var trackedArtworkBox: [Double]?
   @Published private(set) var lastTrackingReason = ""
+  private var startWhenRegistered = false
   private var lastCameraViewSentAt = Date.distantPast
   @Published private(set) var zoomImage: UIImage?
   @Published private(set) var zoom = 1
@@ -156,6 +157,11 @@ final class GlassCameraModel: ObservableObject {
         guard !Task.isCancelled, let self, self.registrationVersion == version else { return }
         self.registered = state == .registered
         if state != .registered && !self.inputMode.isMock { self.stop() }
+        // F03: a visit started before Meta AI authorization resumes on return.
+        if state == .registered, self.startWhenRegistered, !self.inputMode.isMock {
+          self.startWhenRegistered = false
+          if self.canStart { await self.startCamera() }
+        }
       }
     }
   }
@@ -219,6 +225,27 @@ final class GlassCameraModel: ObservableObject {
       }
     }
     #endif
+  }
+  /// F03 one-tap start: connect the guide server with the pasted link if
+  /// needed, send the visitor to Meta AI authorization when required (the visit
+  /// resumes automatically on return), then start the camera. Never skips
+  /// system or Meta permission prompts and reports what is still missing.
+  func beginVisit(link: String) async {
+    guard !connecting, !changingInput, !sessionActive else { return }
+    let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !backendReady, !trimmed.isEmpty { await connectBackend(link: trimmed) }
+    if !inputMode.isMock {
+      guard backendReady else {
+        error = "Paste the guide server link under Connection settings, then tap Begin your visit."; return
+      }
+      if !registered {
+        startWhenRegistered = true
+        status = "Authorize MUSE in Meta AI. The visit starts automatically when you return."
+        await register(); return
+      }
+    }
+    if canStart { await startCamera() }
+    else if inputMode.needsVideo && !videoReady { error = "Choose a video under Developer settings first." }
   }
   func register() async {
     guard !inputMode.isMock, let wearables else { return }

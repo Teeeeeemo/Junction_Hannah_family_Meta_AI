@@ -10,6 +10,10 @@ struct MuseumPhoneView: View {
   @State private var backendLink = ""
   @State private var setupOpen = true
   @State private var showingVideoPicker = false
+  /// F01/F06: visitors see the tour; engineering tools live under Developer settings.
+  @AppStorage("museum.developerMode") private var developerMode = false
+  /// UI tests exercise the engineering surfaces, so they always see them.
+  private var showDeveloper: Bool { developerMode || ProcessInfo.processInfo.arguments.contains("--museum-ui-test") }
   private let gold = Color(red: 0.88, green: 0.77, blue: 0.50)
   private let ink = Color(red: 0.035, green: 0.055, blue: 0.035)
   private var zh: Bool { model.language == "zh" }
@@ -24,19 +28,30 @@ struct MuseumPhoneView: View {
             Spacer()
             AudioOutputPicker().frame(width: 36, height: 36)
           }.foregroundStyle(gold)
-          Text(text("Look closer.", "看见更多。"))
-            .font(.system(size: 38, weight: .regular, design: .serif))
-          Text(text("Every detail has a story.", "每一处细节，都有故事。"))
-            .font(.subheadline).foregroundStyle(.secondary)
+          // F02: the large welcome collapses once a tour is on screen.
+          if model.guide == nil {
+            Text(text("Look closer.", "看见更多。"))
+              .font(.system(size: 38, weight: .regular, design: .serif))
+            Text(text("Every detail has a story.", "每一处细节，都有故事。"))
+              .font(.subheadline).foregroundStyle(.secondary)
+          }
+          HStack(spacing: 16) {
+            statusLight(model.inputMode.isMock ? text("Phone experience", "手机体验") : text("Glasses", "眼镜"),
+              ok: model.inputMode.isMock || model.registered)
+            statusLight(text("Guide server", "讲解服务"), ok: model.backendReady)
+            if model.streaming { statusLight(text("Camera", "相机"), ok: true) }
+          }.font(.caption).accessibilityIdentifier("visit-status")
 
           inputCard
 
           DisclosureGroup(isExpanded: $setupOpen) {
             VStack(alignment: .leading, spacing: 14) {
-              Picker(text("Museum reference", "馆方参考资料"), selection: $model.referenceArtworkID) {
-                Text(text("Visual observations only", "仅作视觉观察")).tag("")
-                Text(text("The Met · Wheat Field with Cypresses", "大都会博物馆 · 麦田与柏树")).tag("met-436535")
+              Picker(text("Verified museum record", "馆方核验资料"), selection: $model.referenceArtworkID) {
+                Text(text("None — describe what is visible", "不使用 · 仅描述画面可见内容")).tag("")
+                Text(text("The Met record: Wheat Field with Cypresses", "大都会博物馆资料：麦田与柏树")).tag("met-436535")
               }.disabled(model.recognizing || model.translating)
+              Text(text("Choose the record only when you look at that painting; it adds sourced history to the guide.",
+                "仅在观看该作品时选择；讲解会加入有出处的历史背景。")).font(.caption).foregroundStyle(.secondary)
               SecureField(text("Complete HTTPS test link", "粘贴完整 HTTPS 测试链接"), text: $backendLink)
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                 .padding(10).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
@@ -93,13 +108,20 @@ struct MuseumPhoneView: View {
               }
               .clipShape(RoundedRectangle(cornerRadius: 16))
             if model.guide?.mode == "gemini" {
-              // Fixed line counts: changing status text must never move the controls below.
-              Text(text("Image tracking: ", "画面追踪：") + model.trackingStatus).font(.caption)
-                .lineLimit(1).truncationMode(.tail)
-              // Distinguishable reason whenever no detail box is drawn (BUG-02 diagnostics).
-              Text(text("Detail box: ", "细节框：") + model.boxDiagnostic).font(.caption).foregroundStyle(.secondary)
-                .lineLimit(2, reservesSpace: true).truncationMode(.tail)
-                .accessibilityIdentifier("box-diagnostic")
+              if showDeveloper {
+                // Fixed line counts: changing status text must never move the controls below.
+                Text(text("Image tracking: ", "画面追踪：") + model.trackingStatus).font(.caption)
+                  .lineLimit(1).truncationMode(.tail)
+                // Distinguishable reason whenever no detail box is drawn (BUG-02 diagnostics).
+                Text(text("Detail box: ", "细节框：") + model.boxDiagnostic).font(.caption).foregroundStyle(.secondary)
+                  .lineLimit(2, reservesSpace: true).truncationMode(.tail)
+                  .accessibilityIdentifier("box-diagnostic")
+              } else {
+                // Always present with a fixed height so the controls below never move.
+                Text(narration.selectedNumber != nil && model.trackedDetailBox == nil
+                  ? text("Locating this detail… keep the artwork in view.", "正在定位当前细节……请保持作品在画面中。") : " ")
+                  .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              }
             }
           }
           if let search = model.artworkSearch, search.status == "needs_confirmation" {
@@ -116,7 +138,7 @@ struct MuseumPhoneView: View {
                 .overlay(alignment: .topTrailing) { Text("\(model.zoom)×").font(.caption).padding(4).background(.black.opacity(0.7)) }
             }.accessibilityIdentifier("detail-zoom")
           }
-          if model.inputMode.isMock, let display = model.debugPreview {
+          if showDeveloper, model.inputMode.isMock, let display = model.debugPreview {
             VStack(alignment: .leading, spacing: 8) {
               Text(text("NATIVE GLASSES DISPLAY · SIMULATED", "原生眼镜界面预览 · 模拟")).font(.caption).foregroundStyle(gold)
               Group {
@@ -181,26 +203,32 @@ struct MuseumPhoneView: View {
                 .accessibilityIdentifier("end-visit")
             } else {
               Button {
-                Task { await model.startCamera() }
+                Task { await model.beginVisit(link: backendLink) }
               } label: {
                 Label(model.connecting ? text("Connecting…", "正在连接…") : model.inputMode.isMock ? text("Start simulated preview", "开始模拟预览") : text("Begin your visit", "开始导览"), systemImage: "camera")
                   .frame(maxWidth: .infinity).padding(.vertical, 8)
               }.buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("start-preview")
-                .disabled(!model.canStart)
+                .disabled(!canBegin)
             }
           }
-          VStack(alignment: .leading, spacing: 5) {
-            Text(model.status).accessibilityIdentifier("camera-status")
-            Text(text(model.inputMode.isMock ? "Simulated input frames: " : "Live glasses frames: ", model.inputMode.isMock ? "模拟输入帧数：" : "真实眼镜帧数：") + String(model.frameCount))
-          }.font(.caption).foregroundStyle(.secondary)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("camera-state")
-            .accessibilityValue(String("frames=\(model.frameCount); streaming=\(model.streaming); sdk=\(model.sdkReady); source=\(model.inputMode.rawValue); sessionActive=\(model.sessionActive); connecting=\(model.connecting); mockEnabled=\(MockDeviceKit.shared.isEnabled); mockPaired=\(MockDeviceKit.shared.pairedDevices.count); recovery=\(model.recoveryPhase); recoveries=\(model.recoveryCount); injectedGap=\(model.injectedInputGap); gapBaseline=\(model.injectedGapRecoveryBaseline); recoveredPCMBase=\(model.recoveredPCMBase); hudSends=\(model.hudSendCount)"))
+          if showDeveloper {
+            VStack(alignment: .leading, spacing: 5) {
+              Text(model.status).accessibilityIdentifier("camera-status")
+              Text(text(model.inputMode.isMock ? "Simulated input frames: " : "Live glasses frames: ", model.inputMode.isMock ? "模拟输入帧数：" : "真实眼镜帧数：") + String(model.frameCount))
+            }.font(.caption).foregroundStyle(.secondary)
+              .accessibilityElement(children: .combine)
+              .accessibilityIdentifier("camera-state")
+              .accessibilityValue(String("frames=\(model.frameCount); streaming=\(model.streaming); sdk=\(model.sdkReady); source=\(model.inputMode.rawValue); sessionActive=\(model.sessionActive); connecting=\(model.connecting); mockEnabled=\(MockDeviceKit.shared.isEnabled); mockPaired=\(MockDeviceKit.shared.pairedDevices.count); recovery=\(model.recoveryPhase); recoveries=\(model.recoveryCount); injectedGap=\(model.injectedInputGap); gapBaseline=\(model.injectedGapRecoveryBaseline); recoveredPCMBase=\(model.recoveredPCMBase); hudSends=\(model.hudSendCount)"))
+          } else {
+            Text(model.status).font(.caption).foregroundStyle(.secondary)
+          }
           if !model.error.isEmpty { Text(model.error).font(.callout).foregroundStyle(.red).textSelection(.enabled).accessibilityIdentifier("camera-error") }
-          Text(text("Live camera + spoken guide. Keep this app in the foreground. Detail tracking and spatial boxes are still in development.",
-            "实时相机与语音导览。使用时请保持 App 在前台；持续细节追踪与现实对齐框仍待接入。"))
+          Text(text("Keep this app in the foreground. The detail box is drawn on this phone's camera view and shown on the glasses as a labelled camera view; on-lens alignment to the real artwork is not implemented yet.",
+            "使用时请保持 App 在前台。细节框画在手机相机画面上，并以标注“相机画面”的小窗显示在眼镜上；与真实作品对齐的镜片框尚未实现。"))
             .font(.caption).foregroundStyle(.secondary)
+          Toggle(text("Developer settings", "开发者设置"), isOn: $developerMode).font(.footnote).tint(gold)
+            .accessibilityIdentifier("developer-mode")
         }.padding(22)
       }.background(ink).tint(gold).preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
@@ -215,11 +243,28 @@ struct MuseumPhoneView: View {
         }
     }
   }
+  /// F03: glasses mode may begin once a guide-server link is available; the
+  /// tap connects and sends the visitor to Meta AI authorization when needed.
+  private var canBegin: Bool {
+    if model.canStart { return true }
+    guard !model.inputMode.isMock, model.sdkReady, !model.connecting, !model.changingInput, !model.sessionActive else { return false }
+    return model.backendReady || !backendLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+  private func statusLight(_ label: String, ok: Bool) -> some View {
+    HStack(spacing: 5) {
+      Circle().fill(ok ? Color.green : Color.white.opacity(0.25)).frame(width: 8, height: 8)
+      Text(label).foregroundStyle(ok ? .primary : .secondary)
+    }
+  }
   private var inputCard: some View {
     VStack(alignment: .leading, spacing: 12) {
       NativeInputSourcePicker(model: model, mode: model.inputMode,
         disabled: model.changingInput || model.connecting, language: model.language).equatable()
-      if model.inputMode.isMock {
+      if model.inputMode.isMock && !showDeveloper {
+        Text(text("Phone experience: your iPhone camera stands in for the glasses camera. No glasses needed.",
+          "手机体验：用 iPhone 相机代替眼镜相机，无需实体眼镜。")).font(.caption).foregroundStyle(.secondary)
+      }
+      if model.inputMode.isMock && showDeveloper {
         Text(text("SIMULATION · NO PHYSICAL GLASSES", "模拟调试 · 无需实体眼镜"))
           .font(.caption.bold()).foregroundStyle(.orange)
         if model.inputMode.needsVideo {
