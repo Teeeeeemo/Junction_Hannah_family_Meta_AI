@@ -7,6 +7,34 @@ export class ApiError extends Error {
 
 export function languageOf(value: unknown): Language { return value === 'zh' ? 'zh' : 'en'; }
 export function textOf(value: unknown, max = 1600): string { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
+
+// PRD v0.4: list titles are at most three words; Chinese is counted with a word segmenter.
+const TITLE_STOPWORDS = new Set(['and', 'of', 'the', 'with', 'in', 'on', 'a', 'an', 'at', 'to', 'for', '的', '与', '和', '及', '里', '之', '中']);
+function titleWords(title: string): { words: string[]; zh: boolean } {
+  const zh = /[㐀-鿿]/.test(title);
+  const words = [...new Intl.Segmenter(zh ? 'zh' : 'en', { granularity: 'word' }).segment(title)].filter(s => s.isWordLike).map(s => s.segment);
+  return { words, zh };
+}
+export function titleWordCount(title: string): number { return titleWords(title).words.length; }
+/** Fallback only: prefer the model's own short title. Drops function words before keeping three. */
+export function limitTitleWords(title: string, max = 3): string {
+  const { words, zh } = titleWords(title);
+  if (words.length <= max) return title.trim();
+  const content = words.filter(word => !TITLE_STOPWORDS.has(word.toLowerCase()));
+  return (content.length ? content : words).slice(0, max).join(zh ? '' : ' ');
+}
+/** Pick a <=3-word list title per detail without creating duplicate titles. */
+export function shortenDetailTitles<T extends Record<string, any>>(details: T[]): T[] {
+  const used = new Set<string>();
+  return details.map(detail => {
+    const full = textOf(detail?.title, 100);
+    const proposed = textOf(detail?.shortTitle, 100);
+    const short = proposed && titleWordCount(proposed) <= 3 ? proposed : limitTitleWords(full);
+    const chosen = short && !used.has(short.toLowerCase()) ? short : full;
+    used.add(chosen.toLowerCase());
+    return { ...detail, title: chosen };
+  });
+}
 export function imageData(value: unknown): { mimeType: string; data: string } {
   if (typeof value !== 'string') throw new ApiError(400, 'INVALID_IMAGE', 'Provide an image data URL.');
   const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);

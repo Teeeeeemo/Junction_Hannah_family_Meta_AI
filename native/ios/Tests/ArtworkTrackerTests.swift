@@ -7,7 +7,8 @@ import CoreGraphics
     precondition(TrackingFreshnessPolicy.evaluate(frameAge: 0.31, resultAge: 0.1) == .hide, "Brief input gaps hide geometry without invalidating the tracker")
     precondition(TrackingFreshnessPolicy.evaluate(frameAge: 0.1, resultAge: 0.31) == .hide, "Stale tracking results never keep geometry visible")
     precondition(TrackingFreshnessPolicy.evaluate(frameAge: 0.9, resultAge: 0.9) == .hide, "A short gap can recover only through a fresh Vision result")
-    precondition(TrackingFreshnessPolicy.evaluate(frameAge: 1.01, resultAge: 0.1) == .rescan, "A long input gap requires a fresh artwork identification")
+    precondition(TrackingFreshnessPolicy.evaluate(frameAge: 2.0, resultAge: 0.1) == .hide, "A glasses delivery stall of a couple of seconds re-acquires locally")
+    precondition(TrackingFreshnessPolicy.evaluate(frameAge: TrackingFreshnessPolicy.rescanAfter + 0.01, resultAge: 0.1) == .rescan, "A long input gap requires a fresh artwork identification")
     precondition(TrackingFreshnessPolicy.evaluate(frameAge: 0.1, resultAge: 3) == .hide, "Slow Vision results hide geometry without pretending the camera stopped")
     let tracker = ArtworkTracker()
     let referenceBox = [0.15, 0.2, 0.5, 0.5]
@@ -45,7 +46,7 @@ import CoreGraphics
     await tracker.reset()
     let reset = await tracker.update(cgImage: reference, detailBox: detail, frameToken: token + 1)
     precondition(reset?.status == "lost" && reset?.detailBox == nil)
-    print("Passed 6 tracking freshness policy checks and 12 actual Vision artwork tracking/translation/brief-miss/sustained-loss/reset checks. Axis-aligned baseline; perspective, video and glasses still require validation.")
+    print("Passed 7 tracking freshness policy checks and 12 actual Vision artwork tracking/translation/brief-miss/sustained-loss/reset checks. Axis-aligned baseline; perspective, video and glasses still require validation.")
   }
 
   static func image(offset: Int, blank: Bool) -> CGImage {
