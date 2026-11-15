@@ -29,14 +29,15 @@ actor ArtworkTracker {
   private var busy = false
   private var generation = 0
   private var lastFrameToken = -1
+  private var misses = 0
 
   func reset() {
-    generation += 1; worker = nil; lastFrameToken = -1
+    generation += 1; worker = nil; lastFrameToken = -1; misses = 0
   }
 
   func start(cgImage: CGImage, artworkBox: [Double], frameToken: Int) async -> TrackingSnapshot {
     generation += 1; let run = generation
-    worker = nil; lastFrameToken = frameToken
+    worker = nil; lastFrameToken = frameToken; misses = 0
     guard let region = ArtworkTrackingWorker.rect(artworkBox) else {
       return TrackingSnapshot(status: "lost", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0)
     }
@@ -60,9 +61,19 @@ actor ArtworkTracker {
     let value = await Task.detached(priority: .userInitiated) { worker.track(cgImage, detailBox: detailBox, frameToken: frameToken) }.value
     busy = false
     guard run == generation else { return nil }
-    if value.status == "lost" { self.worker = nil }
+    guard value.status == "lost" else { misses = 0; return value }
+    // A head-worn camera produces brief low-confidence frames (blur, glare,
+    // a quick turn). Keep the last good observation and report a transient
+    // miss with no regions; only consecutive misses discard the worker.
+    misses += 1
+    guard misses >= Self.maxConsecutiveMisses else {
+      return TrackingSnapshot(status: "reacquiring", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0)
+    }
+    self.worker = nil; misses = 0
     return value
   }
+  /// About 0.8 s at the 15 fps glasses stream.
+  static let maxConsecutiveMisses = 12
 }
 
 /// Accessed only by one bounded task at a time; reset replaces the worker rather
@@ -84,6 +95,10 @@ private final class ArtworkTrackingWorker: @unchecked Sendable {
   private static func visionRect(_ value: CGRect) -> CGRect {
     CGRect(x: value.minX, y: 1 - value.maxY, width: value.width, height: value.height)
   }
+  /// Head-worn glasses frames are lower resolution and blurrier than the
+  /// synthetic tests; 0.5 keeps real artwork boxes while the motion and scale
+  /// gates below still reject implausible jumps.
+  static let minimumConfidence: Float = 0.5
   private static func box(_ value: CGRect) -> [Double] { [value.minX, value.minY, value.width, value.height] }
   func track(_ image: CGImage, detailBox: [Double]?, frameToken: Int) -> TrackingSnapshot {
     let lost = TrackingSnapshot(status: "lost", artworkBox: nil, detailBox: nil, frameToken: frameToken, confidence: 0)
@@ -99,7 +114,7 @@ private final class ArtworkTrackingWorker: @unchecked Sendable {
     }
     #endif
     do { try sequence.perform([request], on: image, orientation: .up) } catch { return lost }
-    guard let result = request.results?.first as? VNDetectedObjectObservation, result.confidence >= 0.65 else { return lost }
+    guard let result = request.results?.first as? VNDetectedObjectObservation, result.confidence >= Self.minimumConfidence else { return lost }
     let tracked = Self.visionRect(result.boundingBox)
     guard Self.rect(Self.box(tracked)) != nil,
       abs(tracked.midX - previous.midX) < 0.25, abs(tracked.midY - previous.midY) < 0.25,
