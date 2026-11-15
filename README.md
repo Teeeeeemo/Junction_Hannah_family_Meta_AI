@@ -32,6 +32,12 @@ npm start
 
 下面的 PRD 与技术计划保留最终产品要求；各项是否已验证，以运行记录为准。最大的未决条件是公开 SDK 的低延迟显示更新，以及相机到佩戴者视野的现实对齐。A 版仍是核心需求，不以相机画面内的框替代真机验收。
 
+## 最新开发与交付排期
+
+当前第一优先级为 **P02／BUG-02 跟随检测框修复**，手机视频、模拟 DAT 和真实镜片分别验收，见 [PRD](docs/01-product-requirements.md)及[专项验收](docs/04-validation-and-delivery.md)。随后推进[首次识别与朗读延迟优化](docs/15-startup-and-narration-latency-plan.md)；[最终交付与界面收口](docs/16-final-delivery-and-ui-plan.md)安排在核心功能修复和验收后的最终阶段实施。两份方案均为待开发任务，不代表当前 IPA 已交付。
+
+[早期 iPhone 实测问题记录](docs/14-iphone-field-issues-2026-11-15.md)保留 0.2.0 历史证据，当前实现与验证以[测试进度](docs/10-ios-simulator-test-progress.md)为准。
+
 ## 阅读顺序
 
 1. [产品文档 PRD](docs/01-product-requirements.md)：目标用户、核心流程、功能范围与验收要求。
