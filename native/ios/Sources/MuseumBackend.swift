@@ -22,6 +22,14 @@ struct MuseumArtworkSearch: Codable, Sendable {
   let selectedCandidateId: String?
   let observationCount: Int
   var selectedCandidate: MuseumArtworkCandidate? { candidates.first { $0.id == selectedCandidateId } }
+  /// The old identity is a matching hint, never a current observation or lock.
+  func identityHints() -> MuseumArtworkSearch? {
+    guard schemaVersion == 2, status == "locked", observationCount >= 2,
+      let candidate = selectedCandidate, candidate.kind == "planar",
+      !candidate.identityKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    return MuseumArtworkSearch(schemaVersion: 2, status: "searching", reason: "Identity hints only; verify in new frames.",
+      candidates: [candidate], selectedCandidateId: nil, observationCount: 0)
+  }
 }
 struct MuseumROI: Codable, Sendable {
   let frameId: String
@@ -85,6 +93,63 @@ struct MuseumGuide: Codable, Sendable {
   }
   func frameBox(for detail: MuseumDetail) -> [Double]? {
     coordinateSpace == "artwork_roi" ? roi?.frameBox(for: detail.box) : detail.box
+  }
+  /// A late translation contributes text only, never its stale geometry or IDs.
+  func mergingTranslation(_ translated: MuseumGuide) -> MuseumGuide? {
+    let ids = details.map(\.id), translatedIDs = translated.details.map(\.id)
+    guard mode == translated.mode, artwork.id == translated.artwork.id,
+      Set(ids).count == ids.count, Set(translatedIDs).count == translatedIDs.count,
+      Set(ids) == Set(translatedIDs) else { return nil }
+    let byID = Dictionary(uniqueKeysWithValues: translated.details.map { ($0.id, $0) })
+    let textDetails = details.map { detail in
+      let text = byID[detail.id]!
+      return MuseumDetail(id: detail.id, number: detail.number, title: text.title, description: text.description,
+        box: detail.box, sourceIds: detail.sourceIds)
+    }
+    return MuseumGuide(mode: mode,
+      artwork: .init(id: artwork.id, title: translated.artwork.title, artist: artwork.artist, year: artwork.year),
+      overview: translated.overview, details: textDetails, sources: sources, schemaVersion: schemaVersion,
+      recognition: recognition, coordinateSpace: coordinateSpace, roi: roi)
+  }
+  /// Fixed local diagnostics only: no image content, identity or server text.
+  /// This is the single validation path used by relocalized(to:roi:).
+  func relocalizationFailure(to lock: MuseumArtworkSearch, roi: MuseumROI) -> String? {
+    func validBox(_ box: [Double]) -> Bool {
+      box.count == 4 && box.allSatisfy(\.isFinite) && box[0] >= 0 && box[1] >= 0 &&
+        box[2] > 0 && box[3] > 0 && box[0] + box[2] <= 1.000000001 && box[1] + box[3] <= 1.000000001
+    }
+    guard coordinateSpace == "artwork_roi" else { return "coordinate_space" }
+    guard lock.schemaVersion == 2, lock.status == "locked", lock.observationCount >= 2,
+      let candidate = lock.selectedCandidate, candidate.kind == "planar" else { return "lock_state" }
+    guard let identity = recognition?.selectedCandidate?.identityKey,
+      !identity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      candidate.identityKey == identity else { return "identity_mismatch" }
+    guard validBox(candidate.box), validBox(roi.box),
+      !roi.frameId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      (1...20_000).contains(roi.frameWidth), (1...20_000).contains(roi.frameHeight) else { return "roi_region" }
+    guard details.allSatisfy({ validBox($0.box) }) else { return "detail_box" }
+    guard Double(roi.frameWidth) * roi.box[2] >= 96,
+      Double(roi.frameHeight) * roi.box[3] >= 96 else { return "pixel_count" }
+    // Integral cropping rounds either edge by less than one original pixel.
+    // Compare edges so size rounding cannot silently shift the artwork region.
+    for axis in 0...1 {
+      let pixels = Double(axis == 0 ? roi.frameWidth : roi.frameHeight)
+      // At least one original pixel of margin: an edge-touching artwork may
+      // be partially cropped, so ask the visitor to reframe rather than guess.
+      guard candidate.box[axis] * pixels >= 0.9999999,
+        (1 - candidate.box[axis] - candidate.box[axis + 2]) * pixels >= 0.9999999 else { return "cropped_artwork" }
+      guard abs(roi.box[axis] - candidate.box[axis]) * pixels <= 1.0000001,
+        abs(roi.box[axis] + roi.box[axis + 2] - candidate.box[axis] - candidate.box[axis + 2]) * pixels <= 1.0000001 else { return "crop_rounding" }
+    }
+    return nil
+  }
+  /// Reuse annotations for the controlled, near-frontal planar demo baseline.
+  /// This is not perspective correction or a fresh detail detection.
+  /// The caller must still obtain a fresh tracking result before showing boxes.
+  func relocalized(to lock: MuseumArtworkSearch, roi: MuseumROI) -> MuseumGuide? {
+    guard relocalizationFailure(to: lock, roi: roi) == nil else { return nil }
+    return MuseumGuide(mode: mode, artwork: artwork, overview: overview, details: details, sources: sources,
+      schemaVersion: schemaVersion, recognition: lock, coordinateSpace: coordinateSpace, roi: roi)
   }
 }
 

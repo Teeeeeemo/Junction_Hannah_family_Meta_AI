@@ -59,6 +59,15 @@ struct TourProgress: Sendable {
   mutating func restart() { stopIndex = 0; sentenceIndex = 0; finished = stops.isEmpty; automatic = true }
 }
 
+enum NarrationLocationPolicy {
+  /// How long a newly selected point waits for a tracked location before the
+  /// demo build narrates it anyway (the box appears once tracking recovers).
+  static let continuityGraceSeconds: Double = 2.5
+  static func mayResume(waitingForLocation: Bool, awaitingContinue: Bool) -> Bool {
+    waitingForLocation && !awaitingContinue
+  }
+}
+
 struct TourPoint: Sendable { let number: Int; let title: String }
 struct TourSnapshot: Sendable {
   var artworkTitle = ""
